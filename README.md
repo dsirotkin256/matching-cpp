@@ -7,7 +7,7 @@ Order-matching engine – provides access to liquidity book and coordinates live
 - `GetBestBidPrice(): Number` – The cheapest selling price available at which an asset might be purchased on the market.
 - `GetSpread(): Number` – Returns percent market spread `(b.ask - b.bid) / b.ask * 100`.
 - `GetQuote(): Number` – Returns the most recent price on which a buyer and seller agreed and at which some amount of the asset was transacted.
-- `OrderLookup(OrderID): Order` – Returns active order details if the order sits in the order book
+- `OrderLookup(OrderID): Order` – Returns active order details if the order sits in the order book.
 - `Buy(Order): Status` – Submits buy order.
 - `Sell(Order): Status` – Submits sell order.
 - `Cancel(OrderID): Status` – Submits order cancel request.
@@ -16,16 +16,25 @@ Order-matching engine – provides access to liquidity book and coordinates live
 ### Computing
 
 The order book is maintained (stored and continuously altered) in memory.
-For faster order execution and matching the `OrderTree` (*In-Memory Order Book*) structure implementation is based on self-balancing Binary Search Tree (BST) with the nodes containing `PriceLevel` and FIFO-based Priority `OrderQueue`. For faster lookup the `GetSnapshot()` function reads LRU Cached value (`[ [side, price, depth], ...  ]`) – to avoid lazy tree traversal on each lookup; and retraverse the tree on next lookup when the cache was invalidated (so far it either when the new node/new order was Inserted or existing one was Deleted).
+For faster order execution and matching the `OrderTree` (*In-Memory Order Book*)
+structure implementation is based on self-balancing Binary Search Tree (BST)
+with the nodes containing `PriceLevel` and FIFO-based Priority `OrderQueue`.
+For faster lookup the `GetSnapshot()` function reads LRU Cached value (`[ [side, price, depth], ...  ]`) – to avoid
+lazy tree traversal on each lookup; and retraverse the tree on next lookup when
+the cache was invalidated (so far it either when the new node/new order was Inserted or existing one was Deleted).
 
-For rapid lookups of the market buy and market sell prices, the arrangement of price nodes in `BidOrderTree` (as the best bid price – is the most expensive buy price) will be sorted in descendant order and `AskOrderTree` in ascendant order (as the best ask – is the cheapest selling price)
+For rapid lookups of the market buy and market sell prices, the arrangement of
+price nodes in `BidOrderTree` (as the best bid price – is the most expensive buy price)
+will be sorted in descendant order and `AskOrderTree` in ascendant
+order (as the best ask – is the cheapest selling price):
 
 ```cpp
 bid_price = BidOrderTree.first();
 ask_price = AskOrderTree.first();
 ```
 
-Order book uses self-balancing Binary Search Tree (represents order tree) to maintain active orders in memory:
+Order book uses self-balancing Binary Search Tree (represents order tree) to
+maintain active orders in memory:
 <pre>
                           +-----------+
                           |           |
@@ -119,8 +128,11 @@ Price node consists of *price value* and *priotity queue* of orders of same pric
 
 ### Networking
 The server-to-server communication is reachable via RPC (HTTP/2) calls via
-- **gRPC** – Remote Procedure Call (RPC) Framework which allows bidirectional streaming and flow control, blocking or nonblocking bindings, and cancellation and timeouts
-- and **Protocol Buffers** (Interface Definition Language) for serialising structured data and service definitions
+- **gRPC** – Remote Procedure Call (RPC) Framework which allows bidirectional
+streaming and flow control, blocking or nonblocking bindings, and cancellation and timeouts
+- and **Protocol Buffers** (Interface Definition Language) for serialising 
+structured data and service definitions
 
 ### Storage
-The service uses **Transaction database** (TDB) to store trading transactions and maintain accounts balances and **Chronical Database** (CDB) to update *historical prices*.
+The service uses **Transaction database** (TDB) to store trading transactions 
+and maintain accounts balances and **Chronical Database** (CDB) to update *historical prices*.
