@@ -1,6 +1,14 @@
 # Matching Service
 Order-matching engine – provides access to liquidity book and coordinates live orders
 
+Matching engine provides guarantees that the orders are sorted by price and time.
+
+For buy (bid) side, orders are sorted in descending order of price. Order with highest bid price is first and lowest bid price is last. If price is same then ordering is by time. The order that arrived earlier gets preference.
+For sell (ask) side, orders are sorted in ascending order of price. Order with lowest ask price is first and highest ask price is last. If price is same then ordering is by time. The order that arrived earlier gets preference.
+We have done exhaustive testing of our matching engine to ensure that fairness is guaranteed.
+
+
+
 ## Service-level API
 - `GetOrderBook(): OrderBook` – Order book snapshot `[ [side, price, depth], ...  ]`.
 - `GetBestBidPrice(): Number` – The most expensive buying price available at which an asset might be sold out on the market.
