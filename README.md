@@ -2,12 +2,9 @@
 Order-matching engine – provides access to liquidity book and coordinates live orders
 
 Matching engine provides guarantees that the orders are sorted by price and time.
-
 For buy (bid) side, orders are sorted in descending order of price. Order with highest bid price is first and lowest bid price is last. If price is same then ordering is by time. The order that arrived earlier gets preference.
 For sell (ask) side, orders are sorted in ascending order of price. Order with lowest ask price is first and highest ask price is last. If price is same then ordering is by time. The order that arrived earlier gets preference.
 We have done exhaustive testing of our matching engine to ensure that fairness is guaranteed.
-
-
 
 ## Service-level API
 - `GetOrderBook(): OrderBook` – Order book snapshot `[ [side, price, depth], ...  ]`.
@@ -81,9 +78,11 @@ Price node consists of *price value* and *priotity queue* of orders of same pric
 
 **Order structure:**
 - Market
-- Price 
+- Price
 - Size
+- Executed amount
 - Author
+- Expiration timestamp
 - Creation timestamp
 - Last update timestamp
 - Order side
@@ -120,17 +119,10 @@ Price node consists of *price value* and *priotity queue* of orders of same pric
 - `ME::OB::GetMarketBidPrice()`
 - `ME::OB::GetMarketAskPrice()`
 - `ME::OB::LookupPriceNode(price level)`
-- `ME::OB::Match(o)` – Try to match order else push into the price node queue
 - `ME::OB::Cancel(o)` – Attempt to cancel the order from the order book
-- `ME::OB::Execute_(o)` – Attempt to execute the order given the conditional scenario 
-- `ME::OB::RebuildOrderTree_()` – Rebuild order book on startup
-- `ME::OB::InsertOrder_()`
-- `ME::OB::RemoveOrder_()`
-- `ME::Cache::InvalidateCache(key)`
-- `ME::Cache::SetCacheValue(key)`
-- `ME::Cache::GetCacheValue(key)` – Avoid lazy tree traversal on each lookup
-- `ME::DB::SelectOrders(side)` – Retreive bid/ask orders from database
-- `ME::DB::InsertOrder()` – Populate order in database
+- `ME::OB::Execute(o)` – Attempt to match order given the conditional scenario else push into the price node queue
+- `ME::OB::RebuildOrderBook()` – Rebuild order book on startup
+- `ME::DB::FetchActiveOrders(market)` – Retreive bid/ask orders from database
 - `ME::DB::CancelOrder()` – Update order state to `cancelled`
 - `ME::DB::MatchOrders_(o1, o2)` – Update orders details (executed amount, status, state, handle audit records)
 
