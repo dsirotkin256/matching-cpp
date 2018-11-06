@@ -21,7 +21,7 @@ enum STATE { INACTIVE, ACTIVE, CANCELLED, FULFILLED };
 
 enum TIF { GTC };
 
-double fee_income = 0;
+double fee_income = 0.0;
 
 class Order {
 public:

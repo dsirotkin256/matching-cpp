@@ -1,3 +1,9 @@
+# Install
+
+```bash
+cmake -H. -B./build
+```
+
 # Matching Service
 Order-matching engine – provides access to liquidity book and coordinates live orders
 
