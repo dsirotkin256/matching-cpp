@@ -5,6 +5,12 @@ cmake -H. -B./build
 make -C ./build
 ```
 
+# Run
+
+```bash
+./build/bin/matcher
+```
+
 # Matching Service
 Order-matching engine – provides access to liquidity book and coordinates live orders
 
