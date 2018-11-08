@@ -21,28 +21,35 @@ enum STATE { INACTIVE, ACTIVE, CANCELLED, FULFILLED };
 
 enum TIF { GTC };
 
-double fee_income = 0.0;
+static double fee_income = 0.0;
+static double total_turnover = 0.0;
 
 class Order {
 public:
-  Order()
-      : uuid_{}, price_{0}, quantity_{0}, executed_quantity_{0},
-        state_{STATE::INACTIVE}, created_{Time::now()} {};
+  Order(const std::string &uuid, const Price &price, const Price &quantity,
+        const SIDE &side, const TIF &tif = TIF::GTC,
+        const Price &executed_quantity = 0)
+      : uuid_{uuid}, price_{price}, quantity_{quantity},
+        executed_quantity_{executed_quantity}, side_{side},
+        state_{STATE::INACTIVE}, tif_{tif}, created_{Time::now()},
+        leftover_{quantity_ - executed_quantity_} {}
+  Order() = delete;
   Order(const Order &) = delete;
   ~Order() = default;
-  UUID uuid_;
-  Price price_;
-  double quantity_;
-  double executed_quantity_;
-  SIDE side_;
-  STATE state_;
-  TIF tif_;
-  TimePoint created_;
-  Price leftover() const { return quantity_ - executed_quantity_; }
+  Price quantity() const { return quantity_; }
+  Price price() const { return price_; }
+  SIDE side() const { return side_; }
+  void execute(const Price &quantity) {
+    executed_quantity_ += quantity;
+    leftover_ = quantity_ - executed_quantity_;
+  }
+  Price leftover() const { return leftover_; }
+  TIF tif() const { return tif_; }
   void state(STATE state) {
     state_ = state;
     if (state == STATE::FULFILLED) {
       fee_income += quantity_ * 0.002;
+      total_turnover += quantity_;
     }
   }
   /* Price/Time priority */
@@ -55,10 +62,24 @@ public:
            quantity_ == rhs.quantity_;
   }
   friend std::ostream &operator<<(std::ostream &out, const Order &o) {
-    return out << o.created_.time_since_epoch().count() << " " << o.uuid_ << " "
-               << o.side_ << " " << o.price_ << " " << o.quantity_ << " "
-               << o.executed_quantity_;
+    return out << "Created: " << o.created_.time_since_epoch().count()
+               << " , UUID: " << o.uuid_ << ", Side: " << o.side_
+               << ", State: " << o.state_ << ", Price: " << o.price_
+               << " Quantity: " << o.quantity_
+               << ", Executed:  " << o.executed_quantity_
+               << ", Leftover: " << o.leftover_;
   }
+
+private:
+  UUID uuid_;
+  Price price_;
+  double quantity_;
+  double executed_quantity_;
+  SIDE side_;
+  STATE state_;
+  TIF tif_;
+  TimePoint created_;
+  double leftover_;
 };
 
 /*
@@ -91,10 +112,10 @@ public:
   ~OrderQueue() = default;
 
   bool remove(std::unique_ptr<Order> &order) {
-    auto it = std::find_if(c.begin(), c.end(),
-                           [&](auto &&it) { return it == order; });
-    if (it != c.end()) {
-      c.erase(it, c.end());
+    auto o = std::find_if(c.begin(), c.end(),
+                          [&](auto &&it) { return it == order; });
+    if (o != c.end()) {
+      c.erase(o, c.end());
       return true;
     }
     return false;
@@ -116,47 +137,46 @@ public:
   std::map<Price, OrderQueue> buy_tree_;
   std::map<Price, OrderQueue> sell_tree_;
   void push_(std::unique_ptr<Order> &order) {
-    auto &side = order->side_;
-    auto &node = order->price_;
-    auto &tree = side == SIDE::BUY ? buy_tree_ : sell_tree_;
-    tree[node].push(std::move(order));
+    auto &tree = order->side() == SIDE::BUY ? buy_tree_ : sell_tree_;
+    tree[order->price()].push(std::move(order));
   }
   bool cancel(std::unique_ptr<Order> &order) {
-    auto &side = order->side_;
-    auto &node = order->price_;
-    auto &tree = side == SIDE::BUY ? buy_tree_ : sell_tree_;
-    bool result = false;
+    auto &tree = order->side() == SIDE::BUY ? buy_tree_ : sell_tree_;
     try {
-      auto &order_queue = tree.at(node);
+      auto &order_queue = tree.at(order->price());
       order->state(STATE::CANCELLED);
-      result = order_queue.remove(order);
+      auto result = order_queue.remove(order);
       if (order_queue.empty()) /* Drop price node */
-        tree.erase(node);
+        tree.erase(order->price());
       return result;
     } catch (const std::out_of_range &) { /* No price point exist */
-      return result;
+      return false;
     }
   }
 
+  /*
+   * NOTE Calling the function with the same instance
+   * more than once may cause Undefined Behaviour
+   * as it overtakes order ownership
+   */
   bool match(std::unique_ptr<Order> &src) {
-    auto &side = src->side_;
-    auto &price = src->price_;
-    auto &dist_tree = side == SIDE::BUY ? sell_tree_ : buy_tree_;
+    auto &dist_tree = src->side() == SIDE::BUY ? sell_tree_ : buy_tree_;
     src->state(STATE::ACTIVE);
 
     for (auto node = begin(dist_tree); node != end(dist_tree);) {
       auto &dist_queue = node->second;
       /* Buy cheap; sell expensive */
-      if (side == SIDE::BUY ? price >= node->first : price <= node->first) {
+      if (src->side() == SIDE::BUY ? src->price() >= node->first
+                                   : src->price() <= node->first) {
         while (!dist_queue.empty()) {
           auto &dist = dist_queue.top();
           auto src_matching_leftover = src->leftover() - dist->leftover();
           auto dist_matching_leftover = dist->leftover() - src->leftover();
           /* Fulfilled source; partially/fulfilled dist */
           if (src_matching_leftover <= 0) {
-            src->executed_quantity_ += src->leftover();
+            src->execute(src->leftover());
             src->state(STATE::FULFILLED);
-            dist->executed_quantity_ += dist_matching_leftover;
+            dist->execute(dist_matching_leftover);
             /* Remove from queue; delete price node if no orders leftout */
             if (dist->leftover() == 0) {
               dist->state(STATE::FULFILLED);
@@ -167,7 +187,8 @@ public:
           }
           /* Partially-filled source; fulfilled dist */
           else if (src_matching_leftover > 0) {
-            src->executed_quantity_ += dist->leftover();
+            src->execute(dist->leftover());
+            dist->execute(dist->leftover());
             dist->state(STATE::FULFILLED);
             dist_queue.pop();
             /* Try next order */
@@ -185,7 +206,7 @@ public:
       ++node;
     }
 
-    if (src->leftover()) { /* Not enough resources to fulfill the order */
+    if (src->leftover() > 0) { /* Not enough resources to fulfill the order */
       push_(src);
       return false;
     } else /* Order's been fulfilled */
@@ -199,13 +220,14 @@ public:
                   << ", Amount: " << node.second.accumulate()
                   << ", Size: " << node.second.size() << std::endl;
     };
-    std::cout << "\n\n=== Order Book Summary ===\n";
-    std::cout << "----------- Buy ----------\n";
+    std::cout << "\n\n============ Order Book Summary ============\n";
+    std::cout << "----------------- Buy ----------------\n";
     print(buy_tree_);
-    std::cout << "----------- Sell ----------\n";
+    std::cout << "----------------- Sell ----------------\n";
     print(sell_tree_);
 
-    std::cout << "\n\nCommission income: " << fee_income << std::endl;
+    std::cout << "\n\nTotal turnover: " << total_turnover;
+    std::cout << "\nCommission income: " << fee_income << "\n\n";
   }
 };
 } // namespace matching_engine
@@ -214,35 +236,35 @@ int main(int argc, char **argv) {
 
   std::cout << "\n=============== Matching Engine ===============\n";
 
-  matching_engine::OrderBook ob;
+  using namespace matching_engine;
+
+  OrderBook ob;
 
   // SIMULATE GEOMETRIC BROWNIAN MOTION
   double S0 = 0.04;
   double mu = 0.0;
   double sigma = 0.2;
   double T = 1;
-  int steps = 999'999;
+  int steps = 499'999;
   std::vector<double> GBM = geoBrownian(S0, mu, sigma, T, steps);
   long id = 1;
-  unsigned long long  total = 0;
+  std::chrono::nanoseconds elapsed;
   for (auto price : GBM) {
-    auto order = std::make_unique<matching_engine::Order>();
-    order->uuid_ = std::to_string(id++);
-    order->price_ = ceil(price * 10000) / 10000;
-    order->quantity_ = double(rand() % 5000 + 1) / (rand() % 30 + 1);
-    order->side_ =
-        rand() % 2 ? matching_engine::SIDE::BUY : matching_engine::SIDE::SELL;
-    order->tif_ = matching_engine::TIF::GTC;
+    auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL;
+    auto p = ceil(price * 10'000) / 10'000;
+    auto q = double(rand() % 1000 + 1) / (rand() % 30 + 1);
+    auto order = std::make_unique<matching_engine::Order>(std::to_string(id++),
+                                                          p, q, side);
     matching_engine::TimePoint begin = matching_engine::Time::now();
     ob.match(order);
     matching_engine::TimePoint end = matching_engine::Time::now();
-    total += std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin).count();
+    elapsed += std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
   }
 
   ob.print_summary();
 
-  std::cout << "Total time spent " << total/1e+9 << std::endl;
-  std::cout << "Sample size " << GBM.size() << std::endl;
+  std::cout << "Total time spent: " << elapsed.count()/1e+9 << std::endl;
+  std::cout << "Sample size: " << GBM.size() << std::endl;
 
   return 0;
 }

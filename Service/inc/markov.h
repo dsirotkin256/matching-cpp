@@ -2,16 +2,6 @@
 #include <vector>
 #include <random>
 
-bool sortAsc(double,double);
-
-std::vector<double>poissP(double, double);
-
-std::vector<double> brownian(double, double, double, int);
-
-std::vector<double> geoBrownian(double,double,double, double, int);
-
-std::vector<int> DTMC (std::vector< std::vector<double> >, int, int);
-
 //sorting function, to sort arrival times in poissP
 bool sortAsc(double i,double j){
   return (i<j);
