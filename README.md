@@ -52,8 +52,29 @@ will be sorted in descendant order and `AskOrderTree` in ascendant
 order (as the best ask – is the cheapest selling price):
 
 ```cpp
-bid_price = BidOrderTree.first();
-ask_price = AskOrderTree.first();
+class OrderBook {
+    struct Comp {
+        enum compare_type { less, greater };
+        explicit Comp(compare_type t) : type(t) {}
+        template <class T, class U> bool operator()(const T &t, const U &u) const {
+        return type == less ? t < u : t > u;
+     }
+     compare_type type;
+   };
+
+public:
+    OrderBook(const OrderBook &) = delete;
+    OrderBook() : buy_tree_{Comp{Comp::greater}}, sell_tree_{Comp{Comp::less}} {}
+    ~OrderBook() = default;
+    std::map<Price, OrderQueue, Comp> buy_tree_;
+    std::map<Price, OrderQueue, Comp> sell_tree_;
+  ...  
+};
+
+...
+bid_price = orderbook.buy_tree().first();
+ask_price = orderbook.sell_tree().first();
+...
 ```
 
 Order book uses self-balancing Binary Search Tree (represents order tree) to
