@@ -1,14 +1,19 @@
 # Install
 
 ```bash
-cmake -H. -B./build
-make -C ./build
+./build.sh
 ```
 
 # Run
 
 ```bash
 ./build/bin/matcher
+```
+
+# Debug
+
+```bash
+lldb ./build/bin/matcher
 ```
 
 # Matching Service
