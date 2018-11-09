@@ -27,12 +27,13 @@ static double total_turnover = 0.0;
 class Order {
 public:
   Order(const std::string &uuid, const Price &price, const Price &quantity,
-        const SIDE &side, const TIF &tif = TIF::GTC,
-        const Price &executed_quantity = 0)
+        const SIDE &side, const STATE &state = STATE::INACTIVE,
+        const TIF &tif = TIF::GTC, const Price &executed_quantity = 0,
+        const TimePoint &created = Time::now())
       : uuid_{uuid}, price_{price}, quantity_{quantity},
-        executed_quantity_{executed_quantity}, side_{side},
-        state_{STATE::INACTIVE}, tif_{tif}, created_{Time::now()},
-        leftover_{quantity_ - executed_quantity_} {}
+        executed_quantity_{executed_quantity}, side_{side}, state_{state},
+        tif_{tif}, created_{created}, leftover_{quantity_ -
+                                                executed_quantity_} {}
   Order() = delete;
   Order(const Order &) = delete;
   ~Order() = default;
@@ -103,25 +104,26 @@ private:
  */
 
 class OrderQueue
-    : public std::priority_queue<std::unique_ptr<Order>,
-                                 std::vector<std::unique_ptr<Order>>,
-                                 std::less<std::unique_ptr<Order>>> {
+    : public std::priority_queue<std::shared_ptr<Order>,
+                                 std::vector<std::shared_ptr<Order>>,
+                                 std::less<std::shared_ptr<Order>>> {
 public:
   OrderQueue(const OrderQueue &) = delete;
   OrderQueue() = default;
   ~OrderQueue() = default;
 
-  bool remove(std::unique_ptr<Order> &order) {
-    auto o = std::find_if(c.begin(), c.end(),
-                          [&](auto &&it) { return it == order; });
-    if (o != c.end()) {
-      c.erase(o, c.end());
+  bool remove(std::shared_ptr<Order> &order) {
+
+    auto o =
+        std::find_if(begin(c), end(c), [&](auto &&it) { return it == order; });
+    if (o != end(c)) {
+      c.erase(o, end(c));
       return true;
     }
     return false;
   }
   Price accumulate() const {
-    return std::accumulate(c.begin(), c.end(), 0.0,
+    return std::accumulate(begin(c), end(c), 0.0,
                            [](const Price amount, const auto &it) {
                              return amount + it->leftover();
                            });
@@ -133,14 +135,13 @@ public:
   OrderBook(const OrderBook &) = delete;
   OrderBook() : buy_tree_{}, sell_tree_{} {}
   ~OrderBook() = default;
-
   std::map<Price, OrderQueue> buy_tree_;
   std::map<Price, OrderQueue> sell_tree_;
-  void push_(std::unique_ptr<Order> &order) {
+  void push_(std::shared_ptr<Order> &order) {
     auto &tree = order->side() == SIDE::BUY ? buy_tree_ : sell_tree_;
-    tree[order->price()].push(std::move(order));
+    tree[order->price()].push(order);
   }
-  bool cancel(std::unique_ptr<Order> &order) {
+  bool cancel(std::shared_ptr<Order> &order) {
     auto &tree = order->side() == SIDE::BUY ? buy_tree_ : sell_tree_;
     try {
       auto &order_queue = tree.at(order->price());
@@ -154,12 +155,7 @@ public:
     }
   }
 
-  /*
-   * NOTE Calling the function with the same instance
-   * more than once may cause Undefined Behaviour
-   * as it overtakes order ownership
-   */
-  bool match(std::unique_ptr<Order> &src) {
+  bool match(std::shared_ptr<Order> &src) {
     auto &dist_tree = src->side() == SIDE::BUY ? sell_tree_ : buy_tree_;
     src->state(STATE::ACTIVE);
 
@@ -170,13 +166,15 @@ public:
                                    : src->price() <= node->first) {
         while (!dist_queue.empty()) {
           auto &dist = dist_queue.top();
+          /*  */
           auto src_matching_leftover = src->leftover() - dist->leftover();
-          auto dist_matching_leftover = dist->leftover() - src->leftover();
-          /* Fulfilled source; partially/fulfilled dist */
+          /* Fulfilled source; partially or fulfilled dist */
           if (src_matching_leftover <= 0) {
             src->execute(src->leftover());
             src->state(STATE::FULFILLED);
-            dist->execute(dist_matching_leftover);
+            dist->execute(src_matching_leftover == 0
+                              ? dist->leftover()
+                              : abs(src_matching_leftover));
             /* Remove from queue; delete price node if no orders leftout */
             if (dist->leftover() == 0) {
               dist->state(STATE::FULFILLED);
@@ -205,7 +203,6 @@ public:
       }
       ++node;
     }
-
     if (src->leftover() > 0) { /* Not enough resources to fulfill the order */
       push_(src);
       return false;
@@ -225,7 +222,6 @@ public:
     print(buy_tree_);
     std::cout << "----------------- Sell ----------------\n";
     print(sell_tree_);
-
     std::cout << "\n\nTotal turnover: " << total_turnover;
     std::cout << "\nCommission income: " << fee_income << "\n\n";
   }
@@ -253,17 +249,20 @@ int main(int argc, char **argv) {
     auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL;
     auto p = ceil(price * 10'000) / 10'000;
     auto q = double(rand() % 1000 + 1) / (rand() % 30 + 1);
-    auto order = std::make_unique<matching_engine::Order>(std::to_string(id++),
+    auto order = std::make_shared<matching_engine::Order>(std::to_string(id++),
                                                           p, q, side);
     matching_engine::TimePoint begin = matching_engine::Time::now();
     ob.match(order);
     matching_engine::TimePoint end = matching_engine::Time::now();
-    elapsed += std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+    elapsed +=
+        std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+    ob.match(order);
   }
 
   ob.print_summary();
 
-  std::cout << "Total time spent: " << elapsed.count()/1e+9 << std::endl;
+  std::cout << "Total time spent: " << elapsed.count() / 1e+9 << std::endl;
+
   std::cout << "Sample size: " << GBM.size() << std::endl;
 
   return 0;
