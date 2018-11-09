@@ -75,6 +75,12 @@ public:
 bid_price = orderbook.buy_tree().first();
 ask_price = orderbook.sell_tree().first();
 ...
+orderbook.match(limit_buy_order);
+orderbook.match(limit_sell_order);
+...
+orderbook.cancel(limit_buy_order);
+orderbook.cancel(limit_sell_order);
+...
 ```
 
 Order book uses self-balancing Binary Search Tree (represents order tree) to
