@@ -1,6 +1,7 @@
 #include <math.h>
 #include <vector>
 #include <random>
+#include <algorithm>
 
 //sorting function, to sort arrival times in poissP
 bool sortAsc(double i,double j){

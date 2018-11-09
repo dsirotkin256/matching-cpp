@@ -4,6 +4,7 @@
 #include <functional>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <numeric>
 #include <queue>
 #include <vector>
@@ -72,14 +73,14 @@ public:
   }
 
 private:
-  UUID uuid_;
-  Price price_;
-  double quantity_;
+  const UUID uuid_;
+  const Price price_;
+  const double quantity_;
   double executed_quantity_;
-  SIDE side_;
+  const SIDE side_;
   STATE state_;
   TIF tif_;
-  TimePoint created_;
+  const TimePoint created_;
   double leftover_;
 };
 
@@ -161,20 +162,19 @@ public:
 
     for (auto node = begin(dist_tree); node != end(dist_tree);) {
       auto &dist_queue = node->second;
-      /* Buy cheap; sell expensive */
+      /* Buy cheap; sell expensive – conduct price improvement */
       if (src->side() == SIDE::BUY ? src->price() >= node->first
                                    : src->price() <= node->first) {
         while (!dist_queue.empty()) {
           auto &dist = dist_queue.top();
-          /*  */
-          auto src_matching_leftover = src->leftover() - dist->leftover();
+          auto matching_leftover = dist->leftover() - src->leftover();
           /* Fulfilled source; partially or fulfilled dist */
-          if (src_matching_leftover <= 0) {
+          if (matching_leftover >= 0) {
             src->execute(src->leftover());
             src->state(STATE::FULFILLED);
-            dist->execute(src_matching_leftover == 0
+            dist->execute(matching_leftover == 0
                               ? dist->leftover()
-                              : abs(src_matching_leftover));
+                              : dist->leftover() - matching_leftover);
             /* Remove from queue; delete price node if no orders leftout */
             if (dist->leftover() == 0) {
               dist->state(STATE::FULFILLED);
@@ -184,7 +184,7 @@ public:
             break;
           }
           /* Partially-filled source; fulfilled dist */
-          else if (src_matching_leftover > 0) {
+          else if (matching_leftover < 0) {
             src->execute(dist->leftover());
             dist->execute(dist->leftover());
             dist->state(STATE::FULFILLED);
@@ -212,10 +212,12 @@ public:
 
   void print_summary() const {
     auto print = [](auto &&tree) {
-      for (auto &&node : tree)
-        std::cout << "Price: " << node.first
-                  << ", Amount: " << node.second.accumulate()
-                  << ", Size: " << node.second.size() << std::endl;
+      for (auto &&node : tree) {
+        auto &&price_node = node.first;
+        auto &&ob = node.second;
+        std::cout << "Price: " << price_node << ", Amount: " << ob.accumulate()
+                  << ", Size: " << ob.size() << std::endl;
+      }
     };
     std::cout << "\n\n============ Order Book Summary ============\n";
     std::cout << "----------------- Buy ----------------\n";
@@ -230,6 +232,7 @@ public:
 
 int main(int argc, char **argv) {
 
+  std::cout.precision(8);
   std::cout << "\n=============== Matching Engine ===============\n";
 
   using namespace matching_engine;
@@ -241,28 +244,27 @@ int main(int argc, char **argv) {
   double mu = 0.0;
   double sigma = 0.2;
   double T = 1;
-  int steps = 499'999;
+  int steps = 999'999;
   std::vector<double> GBM = geoBrownian(S0, mu, sigma, T, steps);
   long id = 1;
   std::chrono::nanoseconds elapsed;
   for (auto price : GBM) {
     auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL;
     auto p = ceil(price * 10'000) / 10'000;
-    auto q = double(rand() % 1000 + 1) / (rand() % 30 + 1);
+    auto q = double(rand() % 1000 + 1) / (rand() % 20 + 1);
     auto order = std::make_shared<matching_engine::Order>(std::to_string(id++),
                                                           p, q, side);
-    matching_engine::TimePoint begin = matching_engine::Time::now();
+    auto begin = std::chrono::steady_clock::now();
     ob.match(order);
-    matching_engine::TimePoint end = matching_engine::Time::now();
+    auto end = std::chrono::steady_clock::now();
     elapsed +=
         std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
-    ob.match(order);
   }
 
   ob.print_summary();
 
-  std::cout << "Total time spent: " << elapsed.count() / 1e+9 << std::endl;
-
+  double time = elapsed.count() / 1e+14;
+  std::cout << "Total time spent: " << time << std::endl;
   std::cout << "Sample size: " << GBM.size() << std::endl;
 
   return 0;
