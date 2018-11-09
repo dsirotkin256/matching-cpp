@@ -1,19 +1,41 @@
-# Install
+# Setup
+
+### Build
 
 ```bash
 ./build.sh
 ```
 
-# Run
+### Run
 
 ```bash
 ./build/bin/matcher
 ```
 
-# Debug
+### Debug
 
 ```bash
 lldb ./build/bin/matcher
+```
+
+# Docker setup
+
+### Build
+
+```bash
+docker build .
+```
+
+### Run
+
+```bash
+docker run -it -v ${PWD}:/opt/matching --cap-add=SYS_PTRACE --security-opt seccomp=unconfined matching:latest /bin/bash
+```
+
+### Debug
+
+```bash
+lldb-5.0 ./build/bin/matcher
 ```
 
 # Matching Service
