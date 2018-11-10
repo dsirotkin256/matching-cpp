@@ -2,7 +2,8 @@
 
 set -e
 
-rm -rf build builder
+rm -rf build
+rm -rf builder
 
 mkdir -p ./build/
 

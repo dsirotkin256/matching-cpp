@@ -210,6 +210,15 @@ public:
       return true;
   }
 
+  Price spread() const {
+    auto best_sell = begin(sell_tree_)->first;
+    auto best_buy = !buy_tree_.empty() ? (--end(buy_tree_))->first : 0;
+
+    if (!best_buy || !best_sell)
+      return 0;
+    return best_buy && best_sell ? (best_sell - best_buy) / best_sell : 0;
+  }
+
   void print_summary() const {
     auto print = [](auto &&tree) {
       for (auto &&node : tree) {
@@ -224,7 +233,8 @@ public:
     print(buy_tree_);
     std::cout << "----------------- Sell ----------------\n";
     print(sell_tree_);
-    std::cout << "\n\nTotal turnover: " << total_turnover;
+    std::cout << "\nSpread: " << spread() << "\n";
+    std::cout << "\nTotal turnover: " << total_turnover;
     std::cout << "\nCommission income: " << fee_income << "\n\n";
   }
 };
