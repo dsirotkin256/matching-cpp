@@ -247,9 +247,11 @@ public:
       return std::make_tuple(side_volume, total);
     };
     printf("\n\n============ Order Book ============\n\n");
-    printf("---------------- Buy --------------\n");
-    printf("|%-8s|%13s|%10s|\n", "Price", "Volume", "Size");
     printf("-----------------------------------\n");
+    printf("|%-8s|%13s|%10s|\n", "", "", "");
+    printf("|%-8s|%13s|%10s|\n", "Price", "Volume", "Size");
+    printf("|%-8s|%13s|%10s|\n", "", "", "");
+    printf("|--------------- Buy -------------|\n");
     auto [buy_vol, buy_total] = print(buy_tree_);
     printf("|--------------- Sell ------------|\n");
     auto [sell_vol, sell_total] = print(sell_tree_);

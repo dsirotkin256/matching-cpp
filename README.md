@@ -51,9 +51,11 @@ We have done exhaustive testing of our matching engine to ensure that fairness i
 ```
 ============ Order Book ============
 
----------------- Buy --------------
-|Price   |       Volume|      Size|
 -----------------------------------
+|        |             |          |
+|  Price |    Volume   |    Size  |
+|        |             |          |
+---------------- Buy --------------
 |0.0397  |     44113.18|       519|
 |0.0395  |     66039.30|       733|
 |0.0394  |     40262.44|       480|
