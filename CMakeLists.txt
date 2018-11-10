@@ -9,7 +9,7 @@ endif()
 cmake_minimum_required (VERSION 3.10)
 project(MatchingEngine)
 
-option(LLVM_ENABLE_DEBUG "Compile a debug version when using LLVM/clang" NO)
+option(LLVM_ENABLE_DEBUG "Compile a debug version when using LLVM/clang" YES)
 option(ENABLE_TESTS "Build tests" NO)
 option(ENABLE_EXAMPLES "Build examples" NO)
 option(ENABLE_BENCHMARKS "Build benchmarks" NO)

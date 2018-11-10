@@ -7,7 +7,7 @@ rm -rf builder
 
 mkdir -p ./build/
 
-conan install . -if ./builder
+conan install . -if ./builder --build=missing
 
 cmake -H. -B./build/
 

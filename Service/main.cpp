@@ -1,6 +1,7 @@
 #include "markov.h"
 #include <algorithm>
 #include <chrono>
+#include <ctime>
 #include <functional>
 #include <iostream>
 #include <map>
@@ -55,9 +56,9 @@ public:
     }
   }
   /* Price/Time priority */
-  bool operator<=(const Order &rhs) const {
+  bool operator>=(const Order &rhs) const {
     return side_ == rhs.side_ && price_ == rhs.price_ &&
-           created_ <= rhs.created_ && quantity_ <= rhs.quantity_;
+           created_ <= rhs.created_ && quantity_ >= rhs.quantity_;
   }
   bool operator==(const Order &rhs) const {
     return uuid_ == rhs.uuid_ && side_ == rhs.side_ && price_ == rhs.price_ &&
@@ -107,7 +108,7 @@ private:
 class OrderQueue
     : public std::priority_queue<std::shared_ptr<Order>,
                                  std::vector<std::shared_ptr<Order>>,
-                                 std::less<std::shared_ptr<Order>>> {
+                                 std::greater<std::shared_ptr<Order>>> {
 public:
   OrderQueue(const OrderQueue &) = delete;
   OrderQueue() = default;
@@ -132,12 +133,22 @@ public:
 };
 
 class OrderBook {
+  struct Comp {
+    enum compare_type { less, greater };
+    explicit Comp(compare_type t) : type(t) {}
+    template <class T, class U> bool operator()(const T &t, const U &u) const {
+      return type == less ? t < u : t > u;
+    }
+    compare_type type;
+  };
+
 public:
+  std::map<Price, OrderQueue, Comp> buy_tree_;
+  std::map<Price, OrderQueue, Comp> sell_tree_;
   OrderBook(const OrderBook &) = delete;
-  OrderBook() : buy_tree_{}, sell_tree_{} {}
+  OrderBook() : buy_tree_{Comp{Comp::greater}}, sell_tree_{Comp{Comp::less}} {}
   ~OrderBook() = default;
-  std::map<Price, OrderQueue> buy_tree_;
-  std::map<Price, OrderQueue> sell_tree_;
+
   void push_(std::shared_ptr<Order> &order) {
     auto &tree = order->side() == SIDE::BUY ? buy_tree_ : sell_tree_;
     tree[order->price()].push(order);
@@ -146,8 +157,8 @@ public:
     auto &tree = order->side() == SIDE::BUY ? buy_tree_ : sell_tree_;
     try {
       auto &order_queue = tree.at(order->price());
-      order->state(STATE::CANCELLED);
       auto result = order_queue.remove(order);
+      order->state(STATE::CANCELLED);
       if (order_queue.empty()) /* Drop price node */
         tree.erase(order->price());
       return result;
@@ -211,71 +222,92 @@ public:
   }
 
   Price spread() const {
-    auto best_sell = begin(sell_tree_)->first;
-    auto best_buy = !buy_tree_.empty() ? (--end(buy_tree_))->first : 0;
-
-    if (!best_buy || !best_sell)
+    if (sell_tree_.empty() || buy_tree_.empty())
       return 0;
-    return best_buy && best_sell ? (best_sell - best_buy) / best_sell : 0;
+
+    auto best_sell = begin(sell_tree_)->first;
+    auto best_buy = begin(buy_tree_)->first;
+
+    return (best_sell - best_buy) / best_sell;
   }
 
   void print_summary() const {
     auto print = [](auto &&tree) {
+      Price side_volume = 0.0;
+      Price total = 0.0;
       for (auto &&node : tree) {
         auto &&price_node = node.first;
-        auto &&ob = node.second;
-        std::cout << "Price: " << price_node << ", Amount: " << ob.accumulate()
-                  << ", Size: " << ob.size() << std::endl;
+        auto &&order_queue = node.second;
+        auto &&queue_volume = order_queue.accumulate();
+        side_volume += queue_volume;
+        total += queue_volume * price_node;
+        printf("|%-8.4f|%13.2f|%10lu|\n", price_node, queue_volume,
+               order_queue.size());
       }
+      return std::make_tuple(side_volume, total);
     };
-    std::cout << "\n\n============ Order Book Summary ============\n";
-    std::cout << "----------------- Buy ----------------\n";
-    print(buy_tree_);
-    std::cout << "----------------- Sell ----------------\n";
-    print(sell_tree_);
-    std::cout << "\nSpread: " << spread() << "\n";
-    std::cout << "\nTotal turnover: " << total_turnover;
-    std::cout << "\nCommission income: " << fee_income << "\n\n";
+    printf("\n\n============ Order Book ============\n\n");
+    printf("---------------- Buy --------------\n");
+    printf("|%-8s|%13s|%10s|\n", "Price", "Volume", "Size");
+    printf("-----------------------------------\n");
+    auto [buy_vol, buy_total] = print(buy_tree_);
+    printf("|--------------- Sell ------------|\n");
+    auto [sell_vol, sell_total] = print(sell_tree_);
+    printf("-----------------------------------\n");
+    printf("\n\n========== Trading summary =========\n\n");
+    printf("-----------------------------------\n");
+    printf("|%-16s|%16.2f|\n", "Buy volume", buy_vol);
+    printf("|%-16s|%16.2f|\n", "Sell volume", sell_vol);
+    printf("|%-16s|%16.2f|\n", "Buy total", buy_total);
+    printf("|%-16s|%16.2f|\n", "Sell total", sell_total);
+    printf("|%-16s|%15.2f%%|\n", "Spread", spread() * 100);
+    printf("|%-16s|%16.2f|\n", "Turnover", total_turnover);
+    printf("|%-16s|%16.2f|\n", "Commission", fee_income);
+    printf("-----------------------------------\n");
   }
 };
 } // namespace matching_engine
 
 int main(int argc, char **argv) {
 
-  std::cout.precision(8);
-  std::cout << "\n=============== Matching Engine ===============\n";
+  std::cout << "=============== Matching Engine ===============\n";
 
   using namespace matching_engine;
+  using namespace std::chrono_literals;
+  using ns = std::chrono::nanoseconds;
 
   OrderBook ob;
 
   // SIMULATE GEOMETRIC BROWNIAN MOTION
   double S0 = 0.04;
   double mu = 0.0;
-  double sigma = 0.2;
+  double sigma = 0.02;
   double T = 1;
-  int steps = 999'999;
+  int steps = 1e+6 - 1;
   std::vector<double> GBM = geoBrownian(S0, mu, sigma, T, steps);
   long id = 1;
-  std::chrono::nanoseconds elapsed;
+  ns elapsed = 0ns;
   for (auto price : GBM) {
     auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL;
-    auto p = ceil(price * 10'000) / 10'000;
+    auto p = ceil(price * 10000) / 10000;
     auto q = double(rand() % 1000 + 1) / (rand() % 20 + 1);
+    /* q = ceil(q * 1e+8) / 1e+8; */
     auto order = std::make_shared<matching_engine::Order>(std::to_string(id++),
                                                           p, q, side);
-    auto begin = std::chrono::steady_clock::now();
+    auto start = Time::now();
     ob.match(order);
-    auto end = std::chrono::steady_clock::now();
-    elapsed +=
-        std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+    auto finish = Time::now();
+    elapsed += finish - start;
   }
 
   ob.print_summary();
 
-  double time = elapsed.count() / 1e+14;
-  std::cout << "Total time spent: " << time << std::endl;
-  std::cout << "Sample size: " << GBM.size() << std::endl;
+  std::cout << "\n\n========== Sample Summary =========\n\n";
+
+  std::cout << "Time spent: "
+            << elapsed.count() / 1e+9 << " sec."
+            << std::endl;
+  std::cout << "Sample size: " << GBM.size() << std::endl << std::endl;
 
   return 0;
 }

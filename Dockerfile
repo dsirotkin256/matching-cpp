@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=GMT
 RUN apt-get -y update \
  && apt-get -y dist-upgrade
-RUN apt-get -y install software-properties-common build-essential wget curl git
+RUN apt-get -y install software-properties-common build-essential wget curl git tmux
 RUN add-apt-repository ppa:ubuntu-toolchain-r/test \
  && apt-get -y update \
  && apt-get -y install clang-5.0 clang++-5.0 libc++-dev libc++abi-dev autoconf clang-tidy-5.0 clang-format-5.0 lldb-5.0 gdb cmake \
