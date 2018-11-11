@@ -87,6 +87,10 @@ Lookup time: 0.00025 sec.
 Sample size: 1000000
 ```
 
+- Stress test with 1m GBM samples every 5s — 2m active orders after 3h uptime fit in 300MB memory space
+
+[![asciicast](https://asciinema.org/a/YG6fTSDn4eyNdUu28gfOh8i6X.svg)](https://asciinema.org/a/YG6fTSDn4eyNdUu28gfOh8i6X)
+
 ## Service-level API
 - `GetOrderBook(): OrderBook` – Order book snapshot `[ [side, price, depth], ...  ]`.
 - `GetBestBidPrice(): Number` – The most expensive buying price available at which an asset might be sold out on the market.
