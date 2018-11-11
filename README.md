@@ -82,7 +82,8 @@ We have done exhaustive testing of our matching engine to ensure that fairness i
 
 ========== Sample Summary =========
 
-Time spent: 0.922858 sec.
+Time elapsed: 0.922858 sec.
+Lookup time: 0.00025 sec.
 Sample size: 1000000
 ```
 

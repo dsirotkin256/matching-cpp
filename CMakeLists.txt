@@ -9,6 +9,8 @@ endif()
 cmake_minimum_required (VERSION 3.10)
 project(MatchingEngine)
 
+include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
+
 option(LLVM_ENABLE_DEBUG "Compile a debug version when using LLVM/clang" YES)
 option(ENABLE_TESTS "Build tests" NO)
 option(ENABLE_EXAMPLES "Build examples" NO)
@@ -29,7 +31,13 @@ find_package(Threads)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-enable_testing()
+conan_basic_setup(TARGETS)
+
+add_definitions(-DBOOST_ERROR_CODE_HEADER_ONLY)
 
 add_subdirectory(Matching)
+
 add_subdirectory(Service)
+
+enable_testing()
+
