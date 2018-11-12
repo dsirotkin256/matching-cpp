@@ -147,8 +147,8 @@ int main(int argc, char *argv[]) {
     std::cout << "Matching Service is running on port " << port << std::endl;
     std::thread([&ob] {
       double S0 = 0.04;
-      double mu = 0.0;
-      double sigma = 0.05;
+      double mu = 0.5;
+      double sigma = 0.1;
       double T = 1;
       int steps = 1e+6 - 1;
       while (true) {

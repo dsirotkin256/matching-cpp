@@ -220,19 +220,25 @@ public:
       return true;
   }
 
+  Price best_buy() const {
+    return !buy_tree_.empty() ? begin(buy_tree_)->first : 0;
+  }
+
+  Price best_sell() const {
+    return !sell_tree_.empty() ? begin(sell_tree_)->first : 0;
+  }
+
+  Price quote() { return (best_buy() + best_sell()) / 2; }
+
   Price spread() {
-    if (sell_tree_.empty() || buy_tree_.empty())
-      return 0;
-
-    auto best_sell = begin(sell_tree_)->first;
-    auto best_buy = begin(buy_tree_)->first;
-
-    return (best_sell - best_buy) / best_sell;
+    auto buy = best_buy();
+    auto sell = best_sell();
+    return buy && sell ? (sell - buy) / sell : 0;
   }
 
   void print_summary() {
-    std::lock_guard<std::mutex> l{mutex_};
-    auto print = [](auto &&tree) {
+    auto print = [this](auto &&tree) {
+      std::lock_guard<std::mutex> l{mutex_};
       Price side_volume = 0.0;
       unsigned long size = 0;
       for (auto &&node : tree) {
@@ -264,6 +270,9 @@ public:
     printf("-----------------------------------\n");
     printf("|%-16s|%16.2f|\n", "Buy volume", buy_vol);
     printf("|%-16s|%16.2f|\n", "Sell volume", sell_vol);
+    printf("|%-16s|%16.4f|\n", "Best bid", best_buy());
+    printf("|%-16s|%16.4f|\n", "Best ask", best_sell());
+    printf("|%-16s|%16.4f|\n", "Quote", quote());
     printf("|%-16s|%15.2f%%|\n", "Spread", spread() * 100);
     printf("|%-16s|%16.2f|\n", "Turnover", total_turnover);
     printf("|%-16s|%16.2f|\n", "Commission", fee_income);

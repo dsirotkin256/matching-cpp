@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-export CXXFLAGS='-stdlib=libc++ -lc++abi'
+export CXXFLAGS=-'-std=c++17'
 export CC=clang
 export CXX=clang++
 
