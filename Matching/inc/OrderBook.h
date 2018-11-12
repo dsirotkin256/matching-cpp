@@ -246,6 +246,7 @@ public:
       }
       return std::make_tuple(side_volume, size);
     };
+    std::cout << "\033[2J\033[1;1H";
     printf("\n\n============ Order Book ============\n\n");
     printf("-----------------------------------\n");
     printf("|%-8s|%13s|%10s|\n", "", "", "");
