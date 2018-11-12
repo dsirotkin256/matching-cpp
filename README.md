@@ -238,11 +238,14 @@ Price node consists of *price value* and *priotity queue* of orders of same pric
 - `ME::DB::MatchOrders_(o1, o2)` – Update orders details (executed amount, status, state, handle audit records)
 
 ### Networking
-The server-to-server communication is reachable via RPC (HTTP/2) calls via
-- **gRPC** – Remote Procedure Call (RPC) Framework which allows bidirectional
-streaming and flow control, blocking or nonblocking bindings, and cancellation and timeouts
-- and **Protocol Buffers** (Interface Definition Language) for serialising 
-structured data and service definitions
+- Submit new order or cancel existing: orders are placed/canceled via HTTP Boost.Beast on Boost.Asio
+- The value of corresponding market order book key in Redis is updated on order matching (execution or cancelation) or service recovery
+- Order book snapshot lookup is available through Redis
+- Async non-blocking HTTP server with Priority Queue and Worker Pool — later might be used interchangeably with Redis queue
+![HTTP communication diagram](docs/HTTP-matching.svg)
+
+### Configuration
+Dynamic settings are fetched via subscription on [Redis keyspace notifications](https://redis.io/topics/notifications)
 
 ### Storage
 The service uses **Transaction database** (TDB) to store trading transactions 
