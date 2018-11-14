@@ -28,14 +28,14 @@ docker build .
 
 ### Run
 
-In fresh container:
+In image in fresh container:
 ```bash
-docker run -it -v ${PWD}:/opt/matching --cap-add=SYS_PTRACE --security-opt seccomp=unconfined matching:latest /bin/bash
+docker run -it -v ${PWD}:/opt/matching --cap-add=SYS_PTRACE --security-opt seccomp=unconfined <IMAGE_ID> /bin/bash
 ```
 
 In the existing one:
 ```bash
-docker container start -i
+docker container start -i <CONTAINER_ID>
 ```
 
 ### Debug
