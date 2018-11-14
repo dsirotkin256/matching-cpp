@@ -28,8 +28,14 @@ docker build .
 
 ### Run
 
+In fresh container:
 ```bash
 docker run -it -v ${PWD}:/opt/matching --cap-add=SYS_PTRACE --security-opt seccomp=unconfined matching:latest /bin/bash
+```
+
+In the existing one:
+```bash
+docker container start -i
 ```
 
 ### Debug
