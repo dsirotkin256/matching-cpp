@@ -1,5 +1,7 @@
 #include "OrderBook.h"
 #include "markov.h"
+#include "spdlog/sinks/stdout_color_sinks.h"
+#include "spdlog/spdlog.h"
 #include <boost/algorithm/string.hpp>
 #include <boost/asio.hpp>
 #include <boost/beast/core.hpp>
@@ -23,7 +25,7 @@ namespace http = boost::beast::http;
 using request_t = http::request<boost::beast::http::string_body>;
 using response_t = http::response<boost::beast::http::string_body>;
 
-static unsigned long long id = 0;
+std::atomic_ullong id = 0;
 
 class TcpConnectionHandler
     : public std::enable_shared_from_this<TcpConnectionHandler> {
@@ -58,6 +60,7 @@ public:
                                                quantity, side);
 
           ob_->match(order);
+          ob_->print_summary();
           self->strand_->dispatch([self] { self->reply(); });
         });
   }
@@ -139,49 +142,50 @@ private:
 };
 
 int main(int argc, char *argv[]) {
+  auto logger = spdlog::stdout_color_mt("console");
   try {
-    auto ob = std::make_shared<OrderBook>();
+    auto ob = std::make_shared<OrderBook>(logger);
     boost::asio::io_context ioc;
     auto port = 8080;
     MatchingServer s(ioc, port, ob);
-    std::cout << "Matching Service is running on port " << port << std::endl;
-    std::thread([&ob] {
+    logger->info("Matching Service is running on port {}", port);
+    auto simulate = [&ob, &logger]() {
       double S0 = 0.04;
-      double mu = 0.5;
+      double mu = 0.2;
       double sigma = 0.1;
       double T = 1;
       int steps = 1e+6 - 1;
-      while (true) {
-        std::vector<double> GBM = geoBrownian(S0, mu, sigma, T, steps);
-        ns elapsed = 0ns;
-        for (auto price : GBM) {
-          auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL;
-          auto p = ceil(price * 10000) / 10000;
-          auto q = double(rand() % 1000 + 1) / (rand() % 20 + 1);
-          auto order =
-              std::make_shared<Order>(std::to_string(id++), p, q, side);
-          auto start = Time::now();
-          ob->match(order);
-          elapsed += Time::now() - start;
-        }
+      std::vector<double> GBM = geoBrownian(S0, mu, sigma, T, steps);
+      ns sample_elapsed = 0ns;
+      ns avg_elapsed = 0ns;
+      for (auto price : GBM) {
+        auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL;
+        auto p = ceil(price * 10000) / 10000;
+        auto q = double(rand() % 1000 + 1) / (rand() % 20 + 1);
+        auto order = std::make_shared<Order>(std::to_string(id++), p, q, side);
+        auto start = Time::now();
+        ob->match(order);
+        auto elapsed = Time::now() - start;
+        sample_elapsed += elapsed;
+      }
 
-        std::cout << "\n\n========== Sample Summary =========\n\n";
-        std::cout << "Time elapsed: " << elapsed.count() / 1e+9 << " sec.\n";
-        std::cout << "Sample size: " << GBM.size() << "\n\n";
-        std::this_thread::sleep_for(5s);
-      }
-    })
-        .detach();
-    std::thread([&ob] {
-      while (true) {
-        ob->print_summary();
-        std::this_thread::sleep_for(2s);
-      }
-    })
-        .detach();
+      ob->print_summary();
+      logger->info("Time elapsed: {} sec.", sample_elapsed.count() / 1e+9);
+      logger->info("Sample size: {}", GBM.size());
+    };
+    simulate();
+    /* std::thread(simulate).detach(); */
+    /* std::thread(simulate).detach(); */
+    /* std::thread([&ob] { */
+    /*   while (true) { */
+    /*     ob->print_summary(); */
+    /*     std::this_thread::sleep_for(5s); */
+    /*   } */
+    /* }) */
+    /*     .detach(); */
     ioc.run();
   } catch (std::exception &e) {
-    std::cerr << "Exception: " << e.what() << "\n";
+    logger->error(e.what());
   }
 
   return 0;

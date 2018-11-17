@@ -9,8 +9,9 @@ target_link_libraries(
     matching_service
     PUBLIC
         matching
-        CONAN_PKG::boost
         Threads::Threads
+        CONAN_PKG::boost
+        CONAN_PKG::jemalloc
 )
 
 if(ENABLE_TESTS)

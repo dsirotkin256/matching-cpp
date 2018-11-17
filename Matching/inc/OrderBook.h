@@ -1,3 +1,5 @@
+#include "spdlog/sinks/stdout_color_sinks.h"
+#include "spdlog/spdlog.h"
 #include <algorithm>
 #include <chrono>
 #include <ctime>
@@ -8,6 +10,7 @@
 #include <mutex>
 #include <numeric>
 #include <queue>
+#include <shared_mutex>
 #include <vector>
 
 namespace matching_engine {
@@ -23,8 +26,8 @@ enum STATE { INACTIVE, ACTIVE, CANCELLED, FULFILLED };
 
 enum TIF { GTC };
 
-static double fee_income = 0.0;
-static double total_turnover = 0.0;
+static double total_turnover(0.0);
+std::mutex gm;
 
 class Order {
 public:
@@ -51,7 +54,7 @@ public:
   void state(STATE state) {
     state_ = state;
     if (state == STATE::FULFILLED) {
-      fee_income += quantity_ * 0.002;
+      std::lock_guard<std::mutex> l(gm);
       total_turnover += quantity_;
     }
   }
@@ -85,26 +88,6 @@ private:
   double leftover_;
 };
 
-/*
- * Path: /orderbook/symbol/depth
- * Example: /orderbook/ADABTC/4
- * Output:
- *    price |  amount |
- * ---------------------
- *  SELL:
- *  0.07658 | 13214.5 |
- *  0.07652 | 13554.1 |
- *  0.07646 |  5439.0 |
- *  0.07644 |   261.1 |
- *
- *  BUY:
- *  0.07638 | 15000.0 |
- *  0.07633 |  6206.4 |
- *  0.07631 |  6603.1 |
- *  0.07625 | 25000.0 |
- *
- */
-
 class OrderQueue
     : public std::priority_queue<std::shared_ptr<Order>,
                                  std::vector<std::shared_ptr<Order>>,
@@ -123,7 +106,7 @@ public:
     }
     return false;
   }
-  Price accumulate() {
+  Price accumulate() const {
     return std::accumulate(begin(c), end(c), 0.0,
                            [](const Price amount, const auto &it) {
                              return amount + it->leftover();
@@ -140,17 +123,20 @@ class OrderBook {
     }
     compare_type type;
   };
-  std::mutex mutex_;
+  mutable std::shared_mutex m_;
+  std::shared_ptr<spdlog::logger> logger_;
 
 public:
   std::map<Price, OrderQueue, Comp> buy_tree_;
   std::map<Price, OrderQueue, Comp> sell_tree_;
   OrderBook(const OrderBook &) = delete;
-  OrderBook() : buy_tree_{Comp{Comp::greater}}, sell_tree_{Comp{Comp::less}} {}
+  OrderBook(std::shared_ptr<spdlog::logger> &logger)
+      : logger_{logger}, buy_tree_{Comp{Comp::greater}}, sell_tree_{Comp{
+                                                             Comp::less}} {}
   ~OrderBook() = default;
 
   bool cancel(std::shared_ptr<Order> &order) {
-    std::lock_guard<std::mutex> l{mutex_};
+    std::unique_lock<std::shared_mutex> l{m_};
     auto &tree = order->side() == SIDE::BUY ? buy_tree_ : sell_tree_;
     try {
       auto &order_queue = tree.at(order->price());
@@ -165,11 +151,11 @@ public:
   }
 
   bool match(std::shared_ptr<Order> &src) {
-    std::lock_guard<std::mutex> l{mutex_};
     auto &dist_tree = src->side() == SIDE::BUY ? sell_tree_ : buy_tree_;
     auto &src_tree = src->side() == SIDE::BUY ? buy_tree_ : sell_tree_;
     src->state(STATE::ACTIVE);
 
+    std::unique_lock<std::shared_mutex> l{m_};
     for (auto node = begin(dist_tree); node != end(dist_tree);) {
       auto &dist_queue = node->second;
       /* Buy cheap; sell expensive – conduct price improvement */
@@ -199,7 +185,7 @@ public:
             dist->execute(dist->leftover());
             dist->state(STATE::FULFILLED);
             dist_queue.pop();
-            /* Try next order */
+            /* Try next order in the queue */
             continue;
           }
         }
@@ -209,36 +195,44 @@ public:
         } else {
           ++node;
         }
+        if (src->leftover() == 0) /* Order's fulfilled — stop iteration */
+          break;
+
+        /* Not fulfilled; try next price node */
         continue;
       }
-      ++node;
+      break;
     }
     if (src->leftover() > 0) { /* Not enough resources to fulfill the order */
       src_tree[src->price()].push(src);
       return false;
-    } else /* Order's been fulfilled */
-      return true;
+    }
+
+    /* Order's been fulfilled */
+    return true;
   }
 
   Price best_buy() const {
+    std::shared_lock<std::shared_mutex> l{m_};
     return !buy_tree_.empty() ? begin(buy_tree_)->first : 0;
   }
 
   Price best_sell() const {
+    std::shared_lock<std::shared_mutex> l{m_};
     return !sell_tree_.empty() ? begin(sell_tree_)->first : 0;
   }
 
-  Price quote() { return (best_buy() + best_sell()) / 2; }
+  Price quote() const { return (best_buy() + best_sell()) / 2; }
 
-  Price spread() {
+  Price spread() const {
     auto buy = best_buy();
     auto sell = best_sell();
     return buy && sell ? (sell - buy) / sell : 0;
   }
 
-  void print_summary() {
+  void print_summary() const {
     auto print = [this](auto &&tree) {
-      std::lock_guard<std::mutex> l{mutex_};
+      std::shared_lock<std::shared_mutex> l{m_};
       Price side_volume = 0.0;
       unsigned long size = 0;
       for (auto &&node : tree) {
@@ -252,6 +246,7 @@ public:
       }
       return std::make_tuple(side_volume, size);
     };
+
     std::cout << "\033[2J\033[1;1H";
     printf("\n\n============ Order Book ============\n\n");
     printf("-----------------------------------\n");
@@ -275,7 +270,7 @@ public:
     printf("|%-16s|%16.4f|\n", "Quote", quote());
     printf("|%-16s|%15.2f%%|\n", "Spread", spread() * 100);
     printf("|%-16s|%16.2f|\n", "Turnover", total_turnover);
-    printf("|%-16s|%16.2f|\n", "Commission", fee_income);
+    printf("|%-16s|%16.2f|\n", "Commission", total_turnover * 0.002);
     printf("|%-16s|%16.lu|\n", "Order book size", buy_size + sell_size);
     printf("-----------------------------------\n");
   }
