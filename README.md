@@ -23,14 +23,14 @@ lldb ./build/bin/matcher
 ### Build
 
 ```bash
-docker build .
+docker build -t matcher .
 ```
 
 ### Run
 
 In image in fresh container:
 ```bash
-docker run -it -v ${PWD}:/opt/matching --cap-add=SYS_PTRACE --security-opt seccomp=unconfined <IMAGE_ID> /bin/bash
+docker run -it --privileged -v ${PWD}:/opt/matching --cap-add=SYS_PTRACE --security-opt seccomp=unconfined matcher /bin/bash
 ```
 
 In the existing one:

@@ -115,6 +115,7 @@ public:
 };
 
 class OrderBook {
+private:
   struct Comp {
     enum compare_type { less, greater };
     explicit Comp(compare_type t) : type(t) {}
@@ -127,8 +128,9 @@ class OrderBook {
   std::shared_ptr<spdlog::logger> logger_;
 
 public:
-  std::map<Price, OrderQueue, Comp> buy_tree_;
-  std::map<Price, OrderQueue, Comp> sell_tree_;
+  using OrderTree = std::map<Price, std::unique_ptr<OrderQueue>, Comp>;
+  OrderTree buy_tree_;
+  OrderTree sell_tree_;
   OrderBook(const OrderBook &) = delete;
   OrderBook(std::shared_ptr<spdlog::logger> &logger)
       : logger_{logger}, buy_tree_{Comp{Comp::greater}}, sell_tree_{Comp{

@@ -15,6 +15,7 @@ option(ENABLE_TESTS "Build tests" NO)
 option(ENABLE_EXAMPLES "Build examples" NO)
 option(ENABLE_BENCHMARKS "Build benchmarks" NO)
 
+
 # Compiler configuration
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions -Wdeprecated -Wno-switch-enum -Wno-float-equal -Wno-unused-parameter -Wno-unused-member-function -Wno-exit-time-destructors -Wno-documentation-unknown-command -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-disabled-macro-expansion -Wno-weak-vtables -Wno-padded")
@@ -25,7 +26,7 @@ set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
 set(CMAKE_HAVE_THREADS_LIBRARY TRUE)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 set(CMAKE_HAVE_PTHREAD_H TRUE)
-find_package(Threads)
+find_package(Threads REQUIRED)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
