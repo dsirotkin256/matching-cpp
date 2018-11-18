@@ -141,10 +141,10 @@ public:
     std::unique_lock<std::shared_mutex> l{m_};
     auto &tree = order->side() == SIDE::BUY ? buy_tree_ : sell_tree_;
     try {
-      auto &order_queue = tree.at(order->price());
-      auto result = order_queue.remove(order);
+      auto &&order_queue = tree.at(order->price());
+      auto result = order_queue->remove(order);
       order->state(STATE::CANCELLED);
-      if (order_queue.empty()) /* Drop price node */
+      if (order_queue->empty()) /* Drop price node */
         tree.erase(order->price());
       return result;
     } catch (const std::out_of_range &) { /* No price point exist */
@@ -158,58 +158,69 @@ public:
     src->state(STATE::ACTIVE);
 
     std::unique_lock<std::shared_mutex> l{m_};
-    for (auto node = begin(dist_tree); node != end(dist_tree);) {
-      auto &dist_queue = node->second;
+    bool exit_tree = false;
+    bool exit_queue = false;
+    for (auto node = begin(dist_tree); !exit_tree && node != end(dist_tree);) {
+      auto &&dist_queue = node->second;
       /* Buy cheap; sell expensive – conduct price improvement */
       if (src->side() == SIDE::BUY ? src->price() >= node->first
                                    : src->price() <= node->first) {
-        while (!dist_queue.empty()) {
-          auto &dist = dist_queue.top();
-          auto matching_leftover = dist->leftover() - src->leftover();
+        while (!exit_queue && !dist_queue->empty()) {
+          auto &dist = dist_queue->top();
+          auto leftover = dist->leftover() - src->leftover();
+
           /* Fulfilled source; partially or fulfilled dist */
-          if (matching_leftover >= 0) {
+          if (leftover >= 0) {
             src->execute(src->leftover());
             src->state(STATE::FULFILLED);
-            dist->execute(matching_leftover == 0
-                              ? dist->leftover()
-                              : dist->leftover() - matching_leftover);
-            /* Remove from queue; delete price node if no orders leftout */
+
+            if (leftover == 0) /* Exact match */
+              dist->execute(dist->leftover());
+            else /* Partial match */
+              dist->execute(dist->leftover() - leftover);
+
+            /* Remove fulfilled order from queue */
             if (dist->leftover() == 0) {
               dist->state(STATE::FULFILLED);
-              dist_queue.pop();
+              dist_queue->pop();
             }
-            /* Matching is complete; exit queue */
-            break;
+
+            /* Matching is complete */
+            exit_queue = true;
+            exit_tree = true;
           }
           /* Partially-filled source; fulfilled dist */
-          else if (matching_leftover < 0) {
+          else {
             src->execute(dist->leftover());
             dist->execute(dist->leftover());
             dist->state(STATE::FULFILLED);
-            dist_queue.pop();
+            dist_queue->pop();
             /* Try next order in the queue */
-            continue;
           }
         }
-        /* Purge the price point with empty queue */
-        if (dist_queue.empty()) {
+        /* Try next price node */
+        if (dist_queue->empty()) { /* Purge the price point with empty queue */
           node = dist_tree.erase(node++);
         } else {
           ++node;
         }
-        if (src->leftover() == 0) /* Order's fulfilled — stop iteration */
-          break;
-
-        /* Not fulfilled; try next price node */
-        continue;
+      } else {
+        exit_tree = true;
       }
-      break;
     }
-    if (src->leftover() > 0) { /* Not enough resources to fulfill the order */
-      src_tree[src->price()].push(src);
+    /* Not enough resources to fulfill the order; push to source tree */
+    if (src->leftover() > 0) {
+      const auto &found = src_tree.find(src->price());
+      if (found == src_tree.end()) { /* Create new price node */
+        const auto &inserted = src_tree.insert(
+            found, std::make_pair(src->price(),
+                                  std::move(std::make_unique<OrderQueue>())));
+        inserted->second->push(src);
+      } else { /* Insert in existing price node */
+        found->second->push(src);
+      }
       return false;
     }
-
     /* Order's been fulfilled */
     return true;
   }
@@ -233,18 +244,18 @@ public:
   }
 
   void print_summary() const {
-    auto print = [this](auto &&tree) {
+    auto print = [this](const auto &tree) {
       std::shared_lock<std::shared_mutex> l{m_};
       Price side_volume = 0.0;
       unsigned long size = 0;
       for (auto &&node : tree) {
         auto &&price_node = node.first;
         auto &&order_queue = node.second;
-        auto &&queue_volume = order_queue.accumulate();
+        auto &&queue_volume = order_queue->accumulate();
         side_volume += queue_volume;
-        size += order_queue.size();
+        size += order_queue->size();
         printf("|%-8.4f|%13.2f|%10lu|\n", price_node, queue_volume,
-               order_queue.size());
+               order_queue->size());
       }
       return std::make_tuple(side_volume, size);
     };

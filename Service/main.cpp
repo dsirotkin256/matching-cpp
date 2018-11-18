@@ -7,6 +7,7 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/version.hpp>
+#include <boost/lexical_cast.hpp>
 #include <chrono>
 #include <ctime>
 #include <functional>
@@ -14,6 +15,7 @@
 #include <map>
 #include <memory>
 #include <numeric>
+#include <sstream>
 #include <vector>
 
 using namespace matching_engine;
@@ -31,9 +33,10 @@ class TcpConnectionHandler
     : public std::enable_shared_from_this<TcpConnectionHandler> {
 public:
   TcpConnectionHandler(boost::asio::io_context &ioc,
-                       const std::shared_ptr<OrderBook> &ob)
+                       const std::shared_ptr<OrderBook> &ob,
+                       const std::shared_ptr<spdlog::logger> logger)
       : strand_{std::make_unique<boost::asio::io_context::strand>(ioc)},
-        socket_{ioc}, work_{ioc}, ob_{ob} {}
+        socket_{ioc}, work_{ioc}, ob_{ob}, logger_{logger} {}
 
   void dispatch() {
     auto self = shared_from_this();
@@ -43,25 +46,37 @@ public:
           if (ec == boost::beast::http::error::end_of_stream)
             return;
           if (ec) {
-            std::cerr << "http::async_read: " << ec << std::endl;
+            logger_->error("HTTP async read: {}", ec.message());
             return;
           }
-          std::cout << "Received: " << request_.body() << std::endl;
+          logger_->info("HTTP async read: {}", request_.target().to_string());
 
+          std::string target = request_.target().to_string();
+          boost::trim_if(target, [](auto ch) { return ch == '/'; });
           std::vector<std::string> params;
-          boost::split(params, request_.body(), boost::is_any_of(","));
-          if (params.size() < 3) {
-            throw std::invalid_argument("invalid arguments");
-          }
-          SIDE side = params[0] == "BUY" ? SIDE::BUY : SIDE::SELL;
-          Price price = std::stod(params[1]);
-          Price quantity = std::stod(params[2]);
-          auto order = std::make_shared<Order>(std::to_string(id++), price,
-                                               quantity, side);
+          boost::split(params, target, [](auto ch) { return ch == '/'; },
+                       boost::token_compress_on);
 
-          ob_->match(order);
+          std::ostringstream ss;
+          if (params.size() < 3) {
+            logger_->warn("HTTP async read: invalid request");
+            ss << "Invalid request" << std::endl;
+          } else {
+            SIDE side = params[0] == "BUY" ? SIDE::BUY : SIDE::SELL;
+            Price price = std::stod(params[1]);
+            Price quantity = std::stod(params[2]);
+            auto order = std::make_shared<Order>(std::to_string(id++), price,
+                                                 quantity, side);
+            auto start = Time::now();
+            bool result = ob_->match(order);
+            auto elapsed = Time::now() - start;
+            ss << "Request: " << target << "<br>"
+               << "Order: {" << *order << "}<br>"
+               << "Matching result: " << result << "<br>"
+               << "Elapsed time: " << elapsed.count() / 1e+9 << " sec. <br>";
+          }
+          self->strand_->dispatch([self, res = ss.str()] { self->reply(res); });
           ob_->print_summary();
-          self->strand_->dispatch([self] { self->reply(); });
         });
   }
 
@@ -83,15 +98,15 @@ private:
     return res;
   }
 
-  void reply() {
+  void reply(std::string body) {
     auto self = shared_from_this();
     auto response = std::make_shared<response_t>(
-        build_response(http::status::ok, request_.body(), request_));
+        build_response(http::status::ok, body, request_));
     http::async_write(
         socket_, *response,
         [this, self, response](boost::system::error_code ec, std::size_t) {
           if (ec) {
-            std::cerr << "http::async_write: " << ec << std::endl;
+            logger_->error("HTTP async_write: {}", ec.message());
             return;
           }
           if (response->need_eof())
@@ -108,13 +123,16 @@ private:
   boost::beast::flat_buffer buffer_;
   request_t request_;
   std::shared_ptr<OrderBook> ob_;
+  std::shared_ptr<spdlog::logger> logger_;
 };
 
 class MatchingServer {
 public:
   MatchingServer(boost::asio::io_context &ioc, const short &port,
-                 const std::shared_ptr<OrderBook> ob)
-      : ioc_{ioc}, acceptor_{ioc, tcp::endpoint(tcp::v4(), port)}, ob_{ob} {
+                 const std::shared_ptr<OrderBook> ob,
+                 const std::shared_ptr<spdlog::logger> logger)
+      : ioc_{ioc}, acceptor_{ioc, tcp::endpoint(tcp::v4(), port)}, ob_{ob},
+        logger_{logger} {
     acceptor_.set_option(tcp::acceptor::reuse_address(true));
     acceptor_.listen(boost::asio::socket_base::max_listen_connections);
     accept();
@@ -122,13 +140,14 @@ public:
 
 private:
   void accept() {
-    auto conn = std::make_shared<TcpConnectionHandler>(ioc_, ob_);
+    auto conn = std::make_shared<TcpConnectionHandler>(ioc_, ob_, logger_);
     acceptor_.async_accept(
         conn->socket(), [this, conn](boost::system::error_code ec) {
-          std::cout << "New connection: " << conn->socket().remote_endpoint()
-                    << std::endl;
+          logger_->info("HTTP async accpet: {}",
+                        boost::lexical_cast<std::string>(
+                            conn->socket().remote_endpoint()));
           if (ec)
-            std::cerr << "http::async_write: " << ec << std::endl;
+            logger_->error("HTTP async accept: {}", ec.message());
           else
             conn->dispatch();
 
@@ -139,6 +158,7 @@ private:
   tcp::acceptor acceptor_;
   boost::asio::io_context &ioc_;
   std::shared_ptr<OrderBook> ob_;
+  std::shared_ptr<spdlog::logger> logger_;
 };
 
 int main(int argc, char *argv[]) {
@@ -147,7 +167,7 @@ int main(int argc, char *argv[]) {
     auto ob = std::make_shared<OrderBook>(logger);
     boost::asio::io_context ioc;
     auto port = 8080;
-    MatchingServer s(ioc, port, ob);
+    MatchingServer s(ioc, port, ob, logger);
     logger->info("Matching Service is running on port {}", port);
     auto simulate = [&ob, &logger]() {
       double S0 = 0.04;
@@ -168,21 +188,11 @@ int main(int argc, char *argv[]) {
         auto elapsed = Time::now() - start;
         sample_elapsed += elapsed;
       }
-
       ob->print_summary();
       logger->info("Time elapsed: {} sec.", sample_elapsed.count() / 1e+9);
       logger->info("Sample size: {}", GBM.size());
     };
-    simulate();
-    /* std::thread(simulate).detach(); */
-    /* std::thread(simulate).detach(); */
-    /* std::thread([&ob] { */
-    /*   while (true) { */
-    /*     ob->print_summary(); */
-    /*     std::this_thread::sleep_for(5s); */
-    /*   } */
-    /* }) */
-    /*     .detach(); */
+    std::thread(simulate).detach();
     ioc.run();
   } catch (std::exception &e) {
     logger->error(e.what());
