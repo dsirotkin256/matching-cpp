@@ -8,6 +8,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast/version.hpp>
 #include <boost/lexical_cast.hpp>
+#include <cassert>
 #include <chrono>
 #include <ctime>
 #include <functional>
@@ -17,6 +18,10 @@
 #include <numeric>
 #include <sstream>
 #include <vector>
+
+#include <cds/container/basket_queue.h>
+#include <cds/gc/hp.h>
+#include <cds/init.h>
 
 using namespace matching_engine;
 using namespace std::chrono_literals;
@@ -162,6 +167,12 @@ private:
 };
 
 int main(int argc, char *argv[]) {
+  cds::Initialize();
+
+  // attach this thread to CDS:
+  cds::gc::hp::GarbageCollector::Construct();
+  cds::threading::Manager::attachThread();
+
   auto logger = spdlog::stdout_color_mt("console");
   try {
     auto ob = std::make_shared<OrderBook>(logger);
@@ -174,7 +185,7 @@ int main(int argc, char *argv[]) {
       double mu = 0.2;
       double sigma = 0.1;
       double T = 1;
-      int steps = 1e+6 - 1;
+      int steps = 1e+7 - 1;
       std::vector<double> GBM = geoBrownian(S0, mu, sigma, T, steps);
       ns sample_elapsed = 0ns;
       ns avg_elapsed = 0ns;
@@ -197,6 +208,7 @@ int main(int argc, char *argv[]) {
   } catch (std::exception &e) {
     logger->error(e.what());
   }
+  cds::Terminate();
 
   return 0;
 }

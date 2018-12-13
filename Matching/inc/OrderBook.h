@@ -6,10 +6,8 @@
 #include <iostream>
 #include <map>
 #include <memory>
-#include <mutex>
 #include <numeric>
 #include <queue>
-#include <shared_mutex>
 #include <vector>
 
 namespace matching_engine {
@@ -25,8 +23,7 @@ enum STATE { INACTIVE, ACTIVE, CANCELLED, FULFILLED };
 
 enum TIF { GTC };
 
-static double total_turnover(0.0);
-std::mutex gm;
+std::atomic<double> total_turnover{0.0};
 
 class Order {
 public:
@@ -53,8 +50,9 @@ public:
   void state(STATE state) {
     state_ = state;
     if (state == STATE::FULFILLED) {
-      std::lock_guard<std::mutex> l(gm);
-      total_turnover += quantity_;
+      auto v = total_turnover.load();
+      while (!total_turnover.compare_exchange_weak(v, v + quantity_))
+        ;
     }
   }
   /* Price/Time priority */
@@ -87,14 +85,20 @@ private:
   double leftover_;
 };
 
-class OrderQueue
-    : public std::priority_queue<std::shared_ptr<Order>,
-                                 std::vector<std::shared_ptr<Order>>,
-                                 std::greater<std::shared_ptr<Order>>> {
+typedef cds::container::BasketQueue<
+    cds::gc::HP, Order,
+    typename cds::container::basket_queue::make_traits<
+        cds::opt::item_counter<cds::atomicity::item_counter>>::type>
+    basket_queue;
+
+class OrderQueue {
+private:
+  basket_queue q;
+
 public:
-  /* OrderQueue(const OrderQueue &) = delete; */
+  OrderQueue(const OrderQueue &) = delete;
   OrderQueue() = default;
-  /* ~OrderQueue() = default; */
+  ~OrderQueue() = default;
 
   bool remove(std::shared_ptr<Order> &order) {
     auto o =
@@ -123,7 +127,6 @@ private:
     }
     compare_type type;
   };
-  mutable std::shared_mutex m_;
   std::shared_ptr<spdlog::logger> logger_;
 
 public:
@@ -137,7 +140,6 @@ public:
   ~OrderBook() = default;
 
   bool cancel(std::shared_ptr<Order> &order) {
-    std::unique_lock<std::shared_mutex> l{m_};
     auto &tree = order->side() == SIDE::BUY ? buy_tree_ : sell_tree_;
     try {
       auto &&order_queue = tree.at(order->price());
@@ -156,7 +158,6 @@ public:
     auto &src_tree = src->side() == SIDE::BUY ? buy_tree_ : sell_tree_;
     src->state(STATE::ACTIVE);
 
-    std::unique_lock<std::shared_mutex> l{m_};
     bool exit_tree = false;
     bool exit_queue = false;
     for (auto node = begin(dist_tree); !exit_tree && node != end(dist_tree);) {
@@ -225,12 +226,10 @@ public:
   }
 
   Price best_buy() const {
-    std::shared_lock<std::shared_mutex> l{m_};
     return !buy_tree_.empty() ? begin(buy_tree_)->first : 0;
   }
 
   Price best_sell() const {
-    std::shared_lock<std::shared_mutex> l{m_};
     return !sell_tree_.empty() ? begin(sell_tree_)->first : 0;
   }
 
@@ -244,7 +243,6 @@ public:
 
   void print_summary() const {
     auto print = [this](const auto &tree) {
-      std::shared_lock<std::shared_mutex> l{m_};
       Price side_volume = 0.0;
       unsigned long size = 0;
       for (auto &&node : tree) {
@@ -259,6 +257,7 @@ public:
       return std::make_tuple(side_volume, size);
     };
 
+    auto turnover = total_turnover.load();
     std::cout << "\033[2J\033[1;1H";
     printf("\n\n============ Order Book ============\n\n");
     printf("-----------------------------------\n");
@@ -281,8 +280,8 @@ public:
     printf("|%-16s|%16.4f|\n", "Best ask", best_sell());
     printf("|%-16s|%16.4f|\n", "Quote", quote());
     printf("|%-16s|%15.2f%%|\n", "Spread", spread() * 100);
-    printf("|%-16s|%16.2f|\n", "Turnover", total_turnover);
-    printf("|%-16s|%16.2f|\n", "Commission", total_turnover * 0.002);
+    printf("|%-16s|%16.2f|\n", "Turnover", turnover);
+    printf("|%-16s|%16.2f|\n", "Commission", turnover * 0.002);
     printf("|%-16s|%16.lu|\n", "Order book size", buy_size + sell_size);
     printf("-----------------------------------\n");
   }

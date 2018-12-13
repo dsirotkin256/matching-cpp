@@ -24,6 +24,7 @@ RUN conan profile update env.CC=clang-6.0 default
 RUN conan profile update env.CXX=clang++-6.0 default
 RUN conan profile update env.CXXFLAGS=-stdlib=libc++ default
 RUN conan remote add ess-dmsc https://api.bintray.com/conan/ess-dmsc/conan
+RUN conan remote add dmitry256 https://api.bintray.com/conan/dmitry256/libcds
 ENV CXXFLAGS=-stdlib=libc++
 ENV CC=clang-6.0
 ENV CXX=clang++-6.0

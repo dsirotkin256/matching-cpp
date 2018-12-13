@@ -3,6 +3,7 @@ gtest/1.8.1@bincrafters/stable
 boost/1.68.0@conan/stable
 jemalloc/5.0.1@ess-dmsc/stable
 spdlog/1.2.1@bincrafters/stable
+cds/2.3.2@khizmax/stable
 
 [options]
 boost:shared=True
