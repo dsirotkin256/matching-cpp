@@ -9,6 +9,7 @@
 #include <numeric>
 #include <queue>
 #include <vector>
+#include <cds/container/basket_queue.h>
 
 namespace matching_engine {
 
