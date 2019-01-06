@@ -3,6 +3,7 @@
 #include <chrono>
 #include <ctime>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -14,7 +15,7 @@
 
 namespace matching_engine {
 
-using Price = double;
+using Price = long double;
 using Time = std::chrono::high_resolution_clock;
 using TimePoint = std::chrono::time_point<Time>;
 using UUID = std::string;
@@ -25,7 +26,7 @@ enum STATE { INACTIVE, ACTIVE, CANCELLED, FULFILLED };
 
 enum TIF { GTC };
 
-static double total_turnover(0.0);
+static Price total_turnover(0.0);
 std::mutex gm;
 
 class Order {
@@ -57,6 +58,7 @@ public:
       total_turnover += quantity_;
     }
   }
+  bool is_buy() const { return side_ == SIDE::BUY; }
   /* Price/Time priority */
   bool operator>=(const Order &rhs) const {
     return side_ == rhs.side_ && price_ == rhs.price_ &&
@@ -78,13 +80,13 @@ public:
 private:
   const UUID uuid_;
   const Price price_;
-  const double quantity_;
-  double executed_quantity_;
+  const Price quantity_;
+  Price executed_quantity_;
   const SIDE side_;
   STATE state_;
   TIF tif_;
   const TimePoint created_;
-  double leftover_;
+  Price leftover_;
 };
 
 class OrderQueue
@@ -131,14 +133,15 @@ public:
   OrderTree buy_tree_;
   OrderTree sell_tree_;
   OrderBook(const OrderBook &) = delete;
-  OrderBook(std::shared_ptr<spdlog::logger> &logger)
+  OrderBook() : buy_tree_{Comp{Comp::greater}}, sell_tree_{Comp{Comp::less}} {}
+  OrderBook(const std::shared_ptr<spdlog::logger> &logger)
       : logger_{logger}, buy_tree_{Comp{Comp::greater}}, sell_tree_{Comp{
                                                              Comp::less}} {}
   ~OrderBook() = default;
 
   bool cancel(std::shared_ptr<Order> &order) {
     std::unique_lock<std::shared_mutex> l{m_};
-    auto &tree = order->side() == SIDE::BUY ? buy_tree_ : sell_tree_;
+    auto &tree = order->is_buy() ? buy_tree_ : sell_tree_;
     try {
       auto &&order_queue = tree.at(order->price());
       auto result = order_queue.remove(order);
@@ -152,18 +155,18 @@ public:
   }
 
   bool match(std::shared_ptr<Order> &src) {
-    auto &dist_tree = src->side() == SIDE::BUY ? sell_tree_ : buy_tree_;
-    auto &src_tree = src->side() == SIDE::BUY ? buy_tree_ : sell_tree_;
+    auto &src_tree = src->is_buy() ? buy_tree_ : sell_tree_;
+    auto &dist_tree = src->is_buy() ? sell_tree_ : buy_tree_;
     src->state(STATE::ACTIVE);
 
     std::unique_lock<std::shared_mutex> l{m_};
-    bool exit_tree = false;
-    bool exit_queue = false;
-    for (auto node = begin(dist_tree); !exit_tree && node != end(dist_tree);) {
+    for (auto [node, exit_tree] = std::tuple{begin(dist_tree), false};
+         !exit_tree && node != end(dist_tree);) {
       auto &&dist_queue = node->second;
       /* Buy cheap; sell expensive – conduct price improvement */
-      if (src->side() == SIDE::BUY ? src->price() >= node->first
-                                   : src->price() <= node->first) {
+      if (src->is_buy() ? src->price() >= node->first
+                        : src->price() <= node->first) {
+        bool exit_queue = false;
         while (!exit_queue && !dist_queue.empty()) {
           auto &dist = dist_queue.top();
           auto leftover = dist->leftover() - src->leftover();
@@ -173,11 +176,11 @@ public:
             src->execute(src->leftover());
             src->state(STATE::FULFILLED);
 
-            if (leftover == 0) /* Exact match */
+            if (leftover == 0) { /* Exact match */
               dist->execute(dist->leftover());
-            else /* Partial match */
+            } else { /* Partial match */
               dist->execute(dist->leftover() - leftover);
-
+            }
             /* Remove fulfilled order from queue */
             if (dist->leftover() == 0) {
               dist->state(STATE::FULFILLED);
@@ -226,12 +229,16 @@ public:
 
   Price best_buy() const {
     std::shared_lock<std::shared_mutex> l{m_};
-    return !buy_tree_.empty() ? begin(buy_tree_)->first : 0;
+    return !buy_tree_.empty()
+               ? begin(buy_tree_)->first
+               : !sell_tree_.empty() ? begin(sell_tree_)->first : 0;
   }
 
   Price best_sell() const {
     std::shared_lock<std::shared_mutex> l{m_};
-    return !sell_tree_.empty() ? begin(sell_tree_)->first : 0;
+    return !sell_tree_.empty()
+               ? begin(sell_tree_)->first
+               : !buy_tree_.empty() ? begin(buy_tree_)->first : 0;
   }
 
   Price quote() const { return (best_buy() + best_sell()) / 2; }
@@ -242,49 +249,29 @@ public:
     return buy && sell ? (sell - buy) / sell : 0;
   }
 
-  void print_summary() const {
-    auto print = [this](const auto &tree) {
-      std::shared_lock<std::shared_mutex> l{m_};
-      Price side_volume = 0.0;
-      unsigned long size = 0;
-      for (auto &&node : tree) {
-        auto &&price_node = node.first;
-        auto &&order_queue = node.second;
-        auto &&queue_volume = order_queue.accumulate();
-        side_volume += queue_volume;
-        size += order_queue.size();
-        printf("|%-8.4f|%13.2f|%10lu|\n", price_node, queue_volume,
-               order_queue.size());
-      }
-      return std::make_tuple(side_volume, size);
-    };
+  struct snapshot_point {
+    Price price;
+    Price cumulative_quantity;
+    unsigned long size;
+    SIDE side;
+  };
 
-    std::cout << "\033[2J\033[1;1H";
-    printf("\n\n============ Order Book ============\n\n");
-    printf("-----------------------------------\n");
-    printf("|%-8s|%13s|%10s|\n", "", "", "");
-    printf("|%-8s|%13s|%10s|\n", "Price", "Volume", "Size");
-    printf("|%-8s|%13s|%10s|\n", "", "", "");
-    printf("|--------------- Buy -------------|\n");
-    printf("|%-8s|%13s|%10s|\n", "", "", "");
-    auto [buy_vol, buy_size] = print(buy_tree_);
-    printf("|%-8s|%13s|%10s|\n", "", "", "");
-    printf("|--------------- Sell ------------|\n");
-    printf("|%-8s|%13s|%10s|\n", "", "", "");
-    auto [sell_vol, sell_size] = print(sell_tree_);
-    printf("-----------------------------------\n");
-    printf("\n\n========== Trading summary =========\n\n");
-    printf("-----------------------------------\n");
-    printf("|%-16s|%16.2f|\n", "Buy volume", buy_vol);
-    printf("|%-16s|%16.2f|\n", "Sell volume", sell_vol);
-    printf("|%-16s|%16.4f|\n", "Best bid", best_buy());
-    printf("|%-16s|%16.4f|\n", "Best ask", best_sell());
-    printf("|%-16s|%16.4f|\n", "Quote", quote());
-    printf("|%-16s|%15.2f%%|\n", "Spread", spread() * 100);
-    printf("|%-16s|%16.2f|\n", "Turnover", total_turnover);
-    printf("|%-16s|%16.2f|\n", "Commission", total_turnover * 0.002);
-    printf("|%-16s|%16.lu|\n", "Order book size", buy_size + sell_size);
-    printf("-----------------------------------\n");
+  std::vector<snapshot_point> snapshot() const {
+    std::shared_lock<std::shared_mutex> l{m_};
+    std::vector<snapshot_point> snapshot;
+    auto traverse = [&](const auto &tree, const SIDE &side) {
+      for (auto &&node : tree) {
+        snapshot_point point;
+        point.side = side;
+        point.price = node.first;
+        point.cumulative_quantity = node.second.accumulate();
+        point.size = node.second.size();
+        snapshot.push_back(point);
+      }
+    };
+    traverse(buy_tree_, SIDE::BUY);
+    traverse(sell_tree_, SIDE::SELL);
+    return snapshot;
   }
 };
 } // namespace matching_engine

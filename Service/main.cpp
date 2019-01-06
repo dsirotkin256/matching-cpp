@@ -1,5 +1,8 @@
 #include "OrderBook.h"
 #include "markov.h"
+#include "spdlog/async.h"
+#include "spdlog/async_logger.h"
+#include "spdlog/sinks/basic_file_sink.h"
 #include "spdlog/sinks/stdout_color_sinks.h"
 #include "spdlog/spdlog.h"
 #include <boost/algorithm/string.hpp>
@@ -14,6 +17,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <numeric>
 #include <sstream>
 #include <vector>
@@ -76,7 +80,6 @@ public:
                << "Elapsed time: " << elapsed.count() / 1e+9 << " sec. <br>";
           }
           self->strand_->dispatch([self, res = ss.str()] { self->reply(res); });
-          ob_->print_summary();
         });
   }
 
@@ -162,40 +165,74 @@ private:
 };
 
 int main(int argc, char *argv[]) {
-  auto logger = spdlog::stdout_color_mt("console");
+  spdlog::init_thread_pool(32768, std::thread::hardware_concurrency());
+  auto console =
+      spdlog::create_async<spdlog::sinks::stdout_color_sink_mt>("console");
+  auto ob = std::make_shared<OrderBook>();
   try {
-    auto ob = std::make_shared<OrderBook>(logger);
     boost::asio::io_context ioc;
     auto port = 8080;
-    MatchingServer s(ioc, port, ob, logger);
-    logger->info("Matching Service is running on port {}", port);
-    auto simulate = [&ob, &logger]() {
-      double S0 = 0.04;
-      double mu = 0.2;
-      double sigma = 0.1;
+    MatchingServer s(ioc, port, ob, console);
+    console->info("Matching Service is running on port {}", port);
+    auto simulate = [&]() {
+      double S0 = 1.0;
+      double mu = 0;
+      double sigma = 0.05;
       double T = 1;
-      int steps = 1e+6 - 1;
+      int steps = 1e+8 - 1;
       std::vector<double> GBM = geoBrownian(S0, mu, sigma, T, steps);
       ns sample_elapsed = 0ns;
       ns avg_elapsed = 0ns;
       for (auto price : GBM) {
         auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL;
         auto p = ceil(price * 10000) / 10000;
-        auto q = double(rand() % 1000 + 1) / (rand() % 20 + 1);
+        auto q = double(rand() % 10 + 1) / (rand() % 20 + 1);
         auto order = std::make_shared<Order>(std::to_string(id++), p, q, side);
         auto start = Time::now();
         ob->match(order);
         auto elapsed = Time::now() - start;
         sample_elapsed += elapsed;
       }
-      ob->print_summary();
-      logger->info("Time elapsed: {} sec.", sample_elapsed.count() / 1e+9);
-      logger->info("Sample size: {}", GBM.size());
+      console->info("Time elapsed: {} sec.", sample_elapsed.count() / 1e+9);
+      console->info("Sample size: {}", GBM.size());
+    };
+    auto ticker = [&]() {
+      auto tick_logger =
+          spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
+              "tick_log", "feed.csv", true);
+      tick_logger->set_pattern("%E.%F,%v");
+      while (true) {
+        auto bb = ob->best_buy();
+        auto bs = ob->best_sell();
+        if (bb and bs) {
+          tick_logger->info("{},{}", bb, bs);
+        }
+        tick_logger->flush();
+        std::this_thread::sleep_for(1s);
+      }
+    };
+    auto snapshot = [&]() {
+      while (true) {
+        /* Destroy existing snapshot file on every iteration */
+        auto ob_logger =
+            spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
+                "orderbook_log", "snapshot.csv", true);
+        ob_logger->set_pattern("%v");
+        for (auto point : ob->snapshot()) {
+          ob_logger->info("{},{},{},{}", point.side, point.price,
+                          point.cumulative_quantity, point.size);
+        }
+        ob_logger->flush();
+        spdlog::drop("orderbook_log");
+        std::this_thread::sleep_for(5s);
+      }
     };
     std::thread(simulate).detach();
+    std::thread(ticker).detach();
+    std::thread(snapshot).detach();
     ioc.run();
   } catch (std::exception &e) {
-    logger->error(e.what());
+    console->error(e.what());
   }
 
   return 0;
