@@ -95,8 +95,6 @@ Sample size: 1000000
 
 - Stress test with 1m GBM samples every 5s — 2m active orders after 3h uptime fit in 300MB memory space
 
-[![asciicast](https://asciinema.org/a/N3TFtzxOXGuOL1emF29tmhiwM.svg)](https://asciinema.org/a/N3TFtzxOXGuOL1emF29tmhiwM)
-
 ## Service-level API
 - `GetOrderBook(): OrderBook` – Order book snapshot `[ [side, price, depth], ...  ]`.
 - `GetBestBidPrice(): Number` – The most expensive buying price available at which an asset might be sold out on the market.
