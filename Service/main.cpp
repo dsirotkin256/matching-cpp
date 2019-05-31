@@ -10,15 +10,19 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/version.hpp>
+#include <boost/circular_buffer.hpp>
 #include <boost/lexical_cast.hpp>
+#include <boost/thread.hpp>
 #include <chrono>
 #include <ctime>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <numeric>
+#include <pqxx/pqxx>
 #include <sstream>
 #include <vector>
 
@@ -32,6 +36,29 @@ using request_t = http::request<boost::beast::http::string_body>;
 using response_t = http::response<boost::beast::http::string_body>;
 
 std::atomic_ullong id = 0;
+double sigma_vol = 0.076;
+double price = 0;
+
+std::mutex m;
+std::condition_variable cv;
+
+class DB {
+private:
+  std::unique_ptr<pqxx::connection> conn_;
+  std::shared_ptr<spdlog::logger> logger_;
+
+public:
+  DB(const std::string host, const std::string port, const std::string dbname,
+     const std::string user, const std::string password,
+     const std::shared_ptr<spdlog::logger> logger)
+      : logger_{logger} {
+    std::string conn_info_{"host=" + host + " port=" + port + " user=" + user +
+                           " password=" + password + " dbname=" + dbname};
+    conn_ = std::make_unique<pqxx::connection>(conn_info_);
+    logger_->info("Connected to {}", conn_->dbname());
+  }
+  DB(const DB &) = delete;
+};
 
 class TcpConnectionHandler
     : public std::enable_shared_from_this<TcpConnectionHandler> {
@@ -62,6 +89,24 @@ public:
                        boost::token_compress_on);
 
           std::ostringstream ss;
+
+          if (params[0] == "") {
+            ss << "Matching service is up<br>";
+            self->strand_->dispatch(
+                [self, res = ss.str()] { self->reply(res); });
+            return;
+          }
+
+          if (params[0] == "config" and params[1] == "vol") {
+            Price move_by = std::stod(params[2]);
+            sigma_vol *= move_by;
+            ss << "Request: " << target << "<br>"
+               << "Vol: " << sigma_vol << "<br>";
+            self->strand_->dispatch(
+                [self, res = ss.str()] { self->reply(res); });
+            return;
+          }
+
           if (params.size() < 3) {
             logger_->warn("HTTP async read: invalid request");
             ss << "Invalid request" << std::endl;
@@ -165,75 +210,139 @@ private:
 };
 
 int main(int argc, char *argv[]) {
+  boost::thread_group workers;
   spdlog::init_thread_pool(32768, std::thread::hardware_concurrency());
   auto console =
       spdlog::create_async<spdlog::sinks::stdout_color_sink_mt>("console");
   auto ob = std::make_shared<OrderBook>();
   try {
     boost::asio::io_context ioc;
-    auto port = 8080;
+    auto port = 8989;
+    /* auto rolling_feed = boost::circular_buffer<std::tuple<Price,
+     * Price>>(1000); */
     MatchingServer s(ioc, port, ob, console);
     console->info("Matching Service is running on port {}", port);
-    auto simulate = [&]() {
-      double S0 = 1.0;
-      double mu = 0;
-      double sigma = 0.05;
-      double T = 1;
-      int steps = 1e+8 - 1;
-      std::vector<double> GBM = geoBrownian(S0, mu, sigma, T, steps);
-      ns sample_elapsed = 0ns;
-      ns avg_elapsed = 0ns;
-      for (auto price : GBM) {
-        auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL;
-        auto p = ceil(price * 10000) / 10000;
-        auto q = double(rand() % 10 + 1) / (rand() % 20 + 1);
-        auto order = std::make_shared<Order>(std::to_string(id++), p, q, side);
-        auto start = Time::now();
-        ob->match(order);
-        auto elapsed = Time::now() - start;
-        sample_elapsed += elapsed;
-      }
-      console->info("Time elapsed: {} sec.", sample_elapsed.count() / 1e+9);
-      console->info("Sample size: {}", GBM.size());
-    };
-    auto ticker = [&]() {
-      auto tick_logger =
-          spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
-              "tick_log", "feed.csv", true);
-      tick_logger->set_pattern("%E.%F,%v");
-      while (true) {
-        auto bb = ob->best_buy();
-        auto bs = ob->best_sell();
-        if (bb and bs) {
-          tick_logger->info("{},{}", bb, bs);
-        }
-        tick_logger->flush();
-        std::this_thread::sleep_for(1s);
-      }
-    };
-    auto snapshot = [&]() {
-      while (true) {
-        /* Destroy existing snapshot file on every iteration */
-        auto ob_logger =
-            spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
-                "orderbook_log", "snapshot.csv", true);
-        ob_logger->set_pattern("%v");
-        for (auto point : ob->snapshot()) {
-          ob_logger->info("{},{},{},{}", point.side, point.price,
-                          point.cumulative_quantity, point.size);
-        }
-        ob_logger->flush();
-        spdlog::drop("orderbook_log");
-        std::this_thread::sleep_for(5s);
-      }
-    };
-    std::thread(simulate).detach();
-    std::thread(ticker).detach();
-    std::thread(snapshot).detach();
+
+    DB db("db", "5432", "postgres", "postgres", "postgres", console);
+
+    //    auto trade = [&]() {
+    //      Price balance{50};
+    //      std::vector<Price> op;
+    //      while (true) {
+    //        Price b_sum{0}, s_sum{0};
+    //        Price b_avg{0}, s_avg{0};
+    //        for (auto [b, s] : rolling_feed) {
+    //          b_sum += b;
+    //          s_sum += s;
+    //        }
+    //        b_avg = b_sum / rolling_feed.size();
+    //        s_avg = s_sum / rolling_feed.size();
+    //        auto [buy_price, sell_price] = rolling_feed.front();
+    //        if (!op.empty() and buy_price > s_avg) {
+    //          balance += buy_price * 0.05 * op.size();
+    //          op.clear();
+    //        } else if (sell_price < b_avg and balance > sell_price) {
+    //          op.push_back(sell_price);
+    //          balance -= sell_price * 0.05;
+    //        }
+    //        console->info("Buy price: {}, Sell price: {}, Avg sell price: {},
+    //        Avg "
+    //                      "buy price: {}, Balance: {}, Open "
+    //                      "positions: {}",
+    //                      buy_price, sell_price, s_avg, b_avg, balance,
+    //                      std::accumulate(op.begin(), op.end(), 0.0) * 0.05);
+    //        std::this_thread::sleep_for(1s);
+    //      }
+    //    };
+    //
+    //    auto simulate = [&]() {
+    //      double mu = 0;
+    //      double T = 1;
+    //      int steps = 1e+6 - 1;
+    //      while (true) {
+    //        std::unique_lock<std::mutex> lk(m);
+    //        cv.wait(lk, [] { return price; });
+    //        std::vector<double> GBM = geoBrownian(price, mu, sigma_vol, T,
+    //        steps); ns sample_elapsed = 0ns; ns avg_elapsed = 0ns; for (auto
+    //        price : GBM) {
+    //          auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL;
+    //          auto p = ceil(price * 10000) / 10000;
+    //          auto q = double(rand() % 10 + 1) / (rand() % 20 + 1);
+    //          auto order =
+    //              std::make_shared<Order>(std::to_string(id++), p, q, side);
+    //          auto start = Time::now();
+    //          ob->match(order);
+    //          auto elapsed = Time::now() - start;
+    //          sample_elapsed += elapsed;
+    //        }
+    //        console->info("Time elapsed: {} sec.", sample_elapsed.count() /
+    //        1e+9); console->info("Sample size: {}", GBM.size());
+    //      }
+    //    };
+    //    auto ticker = [&]() {
+    //      auto tick_logger =
+    //          spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
+    //              "tick_log", "feed.csv", true);
+    //      tick_logger->set_pattern("%E.%F,%v");
+    //      while (true) {
+    //        auto bb = ob->best_buy();
+    //        auto bs = ob->best_sell();
+    //        if (bb > 0.0 or bs > 0.0) {
+    //          tick_logger->info("{},{}", bb, bs);
+    //          rolling_feed.push_front({bb, bs});
+    //        }
+    //        tick_logger->flush();
+    //        std::this_thread::sleep_for(300ms);
+    //      }
+    //    };
+    //    auto snapshot = [&]() {
+    //      while (true) {
+    //        /* Destroy existing snapshot file on every iteration */
+    //        auto ob_logger =
+    //            spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
+    //                "orderbook_log", "snapshot.csv", true);
+    //        ob_logger->set_pattern("%v");
+    //        for (auto point : ob->snapshot()) {
+    //          ob_logger->info("{},{},{},{}", point.side, point.price,
+    //                          point.cumulative_quantity, point.size);
+    //        }
+    //        ob_logger->flush();
+    //        spdlog::drop("orderbook_log");
+    //        std::this_thread::sleep_for(5s);
+    //      }
+    //    };
+    //    auto price_seed = [&]() {
+    //      std::ifstream cpuinfo;
+    //      while (true) {
+    //        cpuinfo.open("/proc/loadavg");
+    //        if (cpuinfo.is_open()) {
+    //          std::string line;
+    //          while (getline(cpuinfo, line)) {
+    //            std::vector<std::string> info;
+    //            boost::split(info, line, [](auto ch) { return ch == ' '; },
+    //                         boost::token_compress_on);
+    //            price = std::stod(info[0]);
+    //            cv.notify_one();
+    //          }
+    //        }
+    //        cpuinfo.close();
+    //        std::this_thread::sleep_for(1s);
+    //      }
+    //    };
+    //    std::thread(simulate).detach();
+    //    std::thread(ticker).detach();
+    //    std::thread(snapshot).detach();
+    //    std::thread(trade).detach();
+    //    std::thread(price_seed).detach();
+
+    /* for (unsigned i = std::thread::hardware_concurrency() - 1; i > 0; i--) */
+      /* workers.create_thread(boost::bind(&boost::asio::io_context::run, &ioc)); */
     ioc.run();
   } catch (std::exception &e) {
     console->error(e.what());
   }
+
+  workers.join_all();
 
   return 0;
 }

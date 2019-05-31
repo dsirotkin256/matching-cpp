@@ -3,6 +3,7 @@ gtest/1.8.1@bincrafters/stable
 boost/1.68.0@conan/stable
 jemalloc/5.0.1@ess-dmsc/stable
 spdlog/1.2.1@bincrafters/stable
+libpqxx/6.4.4@bincrafters/stable
 
 [options]
 boost:shared=True

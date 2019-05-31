@@ -17,9 +17,9 @@ option(ENABLE_BENCHMARKS "Build benchmarks" NO)
 
 # Compiler configuration
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free -fno-standalone-debug -march=native -mtune=native -O3 -fexceptions -Wdeprecated -Wno-switch-enum -Wno-float-equal -Wno-unused-parameter -Wno-unused-member-function -Wno-exit-time-destructors -Wno-documentation-unknown-command -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-disabled-macro-expansion -Wno-weak-vtables -Wno-padded")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free -fno-standalone-debug -march=native -mtune=native -O0 -fexceptions -Wdeprecated -Wno-switch-enum -Wno-float-equal -Wno-unused-parameter -Wno-unused-member-function -Wno-exit-time-destructors -Wno-documentation-unknown-command -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-disabled-macro-expansion -Wno-weak-vtables -Wno-padded")
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -lc++abi -lc++ -lpthread -ljemalloc")
-set(CMAKE_BUILD_TYPE Release)
+set(CMAKE_BUILD_TYPE DEBUG)
 
 set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
 set(CMAKE_HAVE_THREADS_LIBRARY TRUE)

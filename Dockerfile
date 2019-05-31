@@ -2,18 +2,18 @@ FROM ubuntu:18.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=GMT
-RUN apt -y update \
- && apt -y dist-upgrade
-RUN apt -y install software-properties-common build-essential linux-tools-common net-tools
-RUN apt -y install libpthread-stubs0-dev libjemalloc-dev libc++-dev libc++abi-dev
-RUN apt -y update
-RUN apt -y install clang-6.0 clang++-6.0 autoconf clang-tidy-6.0 clang-format-6.0 lldb-6.0
-RUN apt -y install gdb cmake vim lsof strace htop sudo iftop curl tmux
+RUN apt-get -y update \
+ && apt-get -y dist-upgrade
+RUN apt-get -y install software-properties-common build-essential linux-tools-common net-tools
+RUN apt-get -y install libpthread-stubs0-dev libjemalloc-dev libc++-dev libc++abi-dev
+RUN apt-get -y update
+RUN apt-get -y install clang-6.0 clang++-6.0 autoconf clang-tidy-6.0 clang-format-6.0 lldb-6.0 postgresql-client
+RUN apt-get -y install gdb cmake vim lsof strace htop sudo iftop curl tmux
 RUN update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-6.0 1000 \
  && update-alternatives --install /usr/bin/clang clang /usr/bin/clang-6.0 1000 \
  && update-alternatives --config clang \
  && update-alternatives --config clang++
-RUN apt install -y python3-pip && pip3 install pip && pip3 install conan
+RUN apt-get -y install python3-pip && pip3 install pip && pip3 install conan
 RUN mkdir -p /opt/matching/builder/
 WORKDIR /opt/matching/
 RUN conan profile show default || conan profile new default --detect

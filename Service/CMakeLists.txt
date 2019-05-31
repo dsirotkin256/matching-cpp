@@ -12,6 +12,7 @@ target_link_libraries(
         Threads::Threads
         CONAN_PKG::boost
         CONAN_PKG::jemalloc
+        CONAN_PKG::libpqxx
 )
 
 if(ENABLE_TESTS)

@@ -1,4 +1,3 @@
-#include "spdlog/spdlog.h"
 #include <algorithm>
 #include <chrono>
 #include <ctime>
@@ -26,7 +25,6 @@ enum STATE { INACTIVE, ACTIVE, CANCELLED, FULFILLED };
 
 enum TIF { GTC };
 
-static Price total_turnover(0.0);
 std::mutex gm;
 
 class Order {
@@ -55,7 +53,6 @@ public:
     state_ = state;
     if (state == STATE::FULFILLED) {
       std::lock_guard<std::mutex> l(gm);
-      total_turnover += quantity_;
     }
   }
   bool is_buy() const { return side_ == SIDE::BUY; }
@@ -126,7 +123,6 @@ private:
     compare_type type;
   };
   mutable std::shared_mutex m_;
-  std::shared_ptr<spdlog::logger> logger_;
 
 public:
   using OrderTree = std::map<Price, OrderQueue, Comp>;
@@ -134,9 +130,6 @@ public:
   OrderTree sell_tree_;
   OrderBook(const OrderBook &) = delete;
   OrderBook() : buy_tree_{Comp{Comp::greater}}, sell_tree_{Comp{Comp::less}} {}
-  OrderBook(const std::shared_ptr<spdlog::logger> &logger)
-      : logger_{logger}, buy_tree_{Comp{Comp::greater}}, sell_tree_{Comp{
-                                                             Comp::less}} {}
   ~OrderBook() = default;
 
   bool cancel(std::shared_ptr<Order> &order) {
@@ -175,7 +168,6 @@ public:
           if (leftover >= 0) {
             src->execute(src->leftover());
             src->state(STATE::FULFILLED);
-
             if (leftover == 0) { /* Exact match */
               dist->execute(dist->leftover());
             } else { /* Partial match */
@@ -214,9 +206,8 @@ public:
     if (src->leftover() > 0) {
       const auto &found = src_tree.find(src->price());
       if (found == src_tree.end()) { /* Create new price node */
-        const auto &inserted = src_tree.insert(
-            found,
-            std::move(std::make_pair(src->price(), std::move(OrderQueue()))));
+        const auto &inserted =
+            src_tree.insert(found, std::make_pair(src->price(), OrderQueue()));
         inserted->second.push(src);
       } else { /* Insert in existing price node */
         found->second.push(src);
