@@ -11,6 +11,19 @@
 #include <queue>
 #include <shared_mutex>
 #include <vector>
+#include <cds/container/details/base.h>
+#include <cds/urcu/general_instant.h>
+#include <cds/urcu/general_buffered.h>
+#include <cds/urcu/general_threaded.h>
+#include <cds/urcu/signal_buffered.h>
+#include <cds/urcu/options.h>
+#include <cds/sync/spinlock.h>
+#include <cds/opt/hash.h>
+#include <cds/opt/compare.h>
+#include <cds/container/bronson_avltree_map_rcu.h>
+#include <cds/container/details/bronson_avltree_base.h>
+#include <cds/gc/hp.h> // for cds::HP (Hazard Pointer) SMR
+#include <cds/init.h>  // for cds::Initialize and cds::Terminate
 
 namespace matching_engine {
 

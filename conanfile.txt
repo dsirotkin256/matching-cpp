@@ -1,9 +1,9 @@
 [requires]
 gtest/1.8.1@bincrafters/stable
-boost/1.68.0@conan/stable
-jemalloc/5.0.1@ess-dmsc/stable
+boost/1.70.0@conan/stable
 spdlog/1.2.1@bincrafters/stable
 libpqxx/6.4.4@bincrafters/stable
+cds/2.3.3@khizmax/stable
 
 [options]
 boost:shared=True
@@ -25,7 +25,6 @@ boost:without_random=True
 boost:without_contract=True
 boost:without_mpi=True
 boost:without_serialization=True
-boost:without_signals=True
 boost:without_coroutine=True
 boost:without_fiber=True
 boost:without_timer=True

@@ -11,8 +11,8 @@ target_link_libraries(
         matching
         Threads::Threads
         CONAN_PKG::boost
-        CONAN_PKG::jemalloc
         CONAN_PKG::libpqxx
+        CONAN_PKG::cds
 )
 
 if(ENABLE_TESTS)

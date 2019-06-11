@@ -13,11 +13,17 @@
 #include <boost/circular_buffer.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/thread.hpp>
+#include <cds/algo/atomic.h>
+#include <cds/details/allocator.h>
+#include <cds/gc/hp.h> // for cds::HP (Hazard Pointer) SMR
+#include <cds/init.h>  // for cds::Initialize and cds::Terminate
+#include <cds/user_setup/allocator.h>
 #include <chrono>
 #include <ctime>
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <typeinfo>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -42,6 +48,14 @@ double price = 0;
 std::mutex m;
 std::condition_variable cv;
 
+typedef cds::urcu::gc<cds::urcu::general_buffered_stripped> rcu_gb;
+struct BronsonAVLTreeMapTraits
+    : public cds::container::bronson_avltree::make_traits<
+          cds::container::bronson_avltree::relaxed_insert<false>,
+          cds::opt::item_counter<cds::atomicity::cache_friendly_item_counter>>::
+          type {};
+typedef cds::container::BronsonAVLTreeMap<rcu_gb, std::string, double,
+                                  BronsonAVLTreeMapTraits> map;
 class DB {
 private:
   std::unique_ptr<pqxx::connection> conn_;
@@ -122,7 +136,7 @@ public:
             ss << "Request: " << target << "<br>"
                << "Order: {" << *order << "}<br>"
                << "Matching result: " << result << "<br>"
-               << "Elapsed time: " << elapsed.count() / 1e+9 << " sec. <br>";
+               << "Elapsed time: " << elapsed.count() / 1e+6 << " ms. <br>";
           }
           self->strand_->dispatch([self, res = ss.str()] { self->reply(res); });
         });
@@ -210,6 +224,16 @@ private:
 };
 
 int main(int argc, char *argv[]) {
+  // Initialize libcds
+  cds::Initialize();
+
+  // Initialize RCU gc
+  rcu_gb RCU_gb;
+  map tree;
+  // If main thread uses lock-free containers
+  // the main thread should be attached to libcds infrastructure
+  cds::threading::Manager::attachThread();
+
   boost::thread_group workers;
   spdlog::init_thread_pool(32768, std::thread::hardware_concurrency());
   auto console =
@@ -255,30 +279,40 @@ int main(int argc, char *argv[]) {
     //      }
     //    };
     //
-    //    auto simulate = [&]() {
-    //      double mu = 0;
-    //      double T = 1;
-    //      int steps = 1e+6 - 1;
-    //      while (true) {
-    //        std::unique_lock<std::mutex> lk(m);
-    //        cv.wait(lk, [] { return price; });
-    //        std::vector<double> GBM = geoBrownian(price, mu, sigma_vol, T,
-    //        steps); ns sample_elapsed = 0ns; ns avg_elapsed = 0ns; for (auto
-    //        price : GBM) {
-    //          auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL;
-    //          auto p = ceil(price * 10000) / 10000;
-    //          auto q = double(rand() % 10 + 1) / (rand() % 20 + 1);
-    //          auto order =
-    //              std::make_shared<Order>(std::to_string(id++), p, q, side);
-    //          auto start = Time::now();
-    //          ob->match(order);
-    //          auto elapsed = Time::now() - start;
-    //          sample_elapsed += elapsed;
-    //        }
-    //        console->info("Time elapsed: {} sec.", sample_elapsed.count() /
-    //        1e+9); console->info("Sample size: {}", GBM.size());
-    //      }
-    //    };
+    /* auto simulate = [&]() { */
+    double mu = 0;
+    double T = 1;
+    int steps = 1e+6 - 1;
+
+    /* std::unique_lock<std::mutex> lk(m); */
+    /* cv.wait(lk, [] { return price; }); */
+    for (auto i = std::thread::hardware_concurrency(); i > 0; i--) {
+      std::thread([&]() {
+        // Attach the thread to libcds infrastructure
+        cds::threading::Manager::attachThread();
+        std::vector<double> GBM = geoBrownian(1.0, mu, sigma_vol, T, steps);
+        ns sample_elapsed = 0ns;
+        ns avg_elapsed = 0ns;
+        for (auto price : GBM) {
+          auto start = Time::now();
+          tree.insert(std::to_string(price), price);
+          /* auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL; */
+          /* auto p = ceil(price * 10000) / 10000; */
+          /* auto q = double(rand() % 10 + 1) / (rand() % 20 + 1); */
+          /* auto order = */
+          /*     std::make_shared<Order>(std::to_string(id++), p, q, side); */
+          /* ob->match(order); */
+          auto elapsed = Time::now() - start;
+          sample_elapsed += elapsed;
+        }
+        console->info("Time elapsed: {} sec.", sample_elapsed.count() / 1e+9);
+        console->info("Sample size: {}", GBM.size());
+        // Detach thread when terminating
+        cds::threading::Manager::detachThread();
+      })
+          .detach();
+    };
+    /* }; */
     //    auto ticker = [&]() {
     //      auto tick_logger =
     //          spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
@@ -295,22 +329,29 @@ int main(int argc, char *argv[]) {
     //        std::this_thread::sleep_for(300ms);
     //      }
     //    };
-    //    auto snapshot = [&]() {
-    //      while (true) {
-    //        /* Destroy existing snapshot file on every iteration */
-    //        auto ob_logger =
-    //            spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
-    //                "orderbook_log", "snapshot.csv", true);
-    //        ob_logger->set_pattern("%v");
-    //        for (auto point : ob->snapshot()) {
-    //          ob_logger->info("{},{},{},{}", point.side, point.price,
-    //                          point.cumulative_quantity, point.size);
-    //        }
-    //        ob_logger->flush();
-    //        spdlog::drop("orderbook_log");
-    //        std::this_thread::sleep_for(5s);
-    //      }
-    //    };
+    auto snapshot = [&]() {
+        cds::threading::Manager::attachThread();
+      while (true) {
+        /* Destroy existing snapshot file on every iteration */
+        /* auto ob_logger = */
+        /*     spdlog::create_async<spdlog::sinks::basic_file_sink_mt>( */
+        /*         "orderbook_log", "snapshot.csv", true); */
+        /* ob_logger->set_pattern("%v"); */
+        /* for (auto point : ob->snapshot()) { */
+        /*   ob_logger->info("{},{},{},{}", point.side, point.price, */
+        /*                   point.cumulative_quantity, point.size); */
+        /* } */
+        /* ob_logger->flush(); */
+        /* spdlog::drop("orderbook_log"); */
+        std::this_thread::sleep_for(5s);
+        map::key_type max_key, min_key;
+        auto max_val = tree.extract_max_key(max_key);
+        auto min_val = tree.extract_min_key(min_key);
+        console->info("Tree size: {}, Min: {}, Max: {}", tree.size(), *min_val, *max_val);
+        tree.update(min_key,[&](bool is_new, std::string const& key, double& item) { item = *min_val; }, true);
+        tree.update(max_key,[&](bool is_new, std::string const& key, double& item) { item = *max_val; }, true);
+      }
+    };
     //    auto price_seed = [&]() {
     //      std::ifstream cpuinfo;
     //      while (true) {
@@ -329,20 +370,27 @@ int main(int argc, char *argv[]) {
     //        std::this_thread::sleep_for(1s);
     //      }
     //    };
-    //    std::thread(simulate).detach();
+    /* std::thread(simulate).detach(); */
     //    std::thread(ticker).detach();
-    //    std::thread(snapshot).detach();
+    std::thread(snapshot).detach();
     //    std::thread(trade).detach();
     //    std::thread(price_seed).detach();
 
     /* for (unsigned i = std::thread::hardware_concurrency() - 1; i > 0; i--) */
-      /* workers.create_thread(boost::bind(&boost::asio::io_context::run, &ioc)); */
+    /*   workers.create_thread(boost::bind(&boost::asio::io_context::run,
+     * &ioc)); */
+
     ioc.run();
   } catch (std::exception &e) {
     console->error(e.what());
   }
 
+  /* std::cout << "Tree statistics: " << tree.statistics() << std::endl; */
+
   workers.join_all();
+
+  // Terminate libcds
+  cds::Terminate();
 
   return 0;
 }
