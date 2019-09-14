@@ -171,15 +171,16 @@ int main(int argc, char *argv[]) {
   auto ob = std::make_shared<OrderBook>();
   try {
     boost::asio::io_context ioc;
-    auto port = 8080;
+    auto port = 9000;
     MatchingServer s(ioc, port, ob, console);
     console->info("Matching Service is running on port {}", port);
+
     auto simulate = [&]() {
       double S0 = 1.0;
       double mu = 0;
       double sigma = 0.05;
       double T = 1;
-      int steps = 1e+8 - 1;
+      int steps = 1e+6 - 1;
       std::vector<double> GBM = geoBrownian(S0, mu, sigma, T, steps);
       ns sample_elapsed = 0ns;
       ns avg_elapsed = 0ns;
@@ -195,6 +196,7 @@ int main(int argc, char *argv[]) {
       }
       console->info("Time elapsed: {} sec.", sample_elapsed.count() / 1e+9);
       console->info("Sample size: {}", GBM.size());
+      exit(EXIT_SUCCESS);
     };
     auto ticker = [&]() {
       auto tick_logger =
