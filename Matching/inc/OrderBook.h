@@ -269,7 +269,8 @@ public:
         point.size = node.second.size();
         snapshot.emplace_back(point);
         limit++;
-        if (limit >= 10) break;
+        if (limit >= 10)
+          break;
       }
     };
     traverse(buy_tree_, SIDE::BUY);

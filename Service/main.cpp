@@ -177,28 +177,31 @@ int main(int argc, char *argv[]) {
 
     auto simulate = [&]() {
       double S0 = 8.60;
-      while(true) {
-      double mu = double(rand() % 2 + 1)/10'000 * (rand() % 2 ? 1 : -1); // add rand drift (+/-)0.01-0.02%
-      double sigma = 0.008 + double(rand() % 2 + 1)/1'000; // flat 0.8% vol + rand 0.1-0.2%
-      double T = 1;
-      int steps = 1e5 - 1;
-      std::vector<double> GBM = geoBrownian(S0, mu, sigma, T, steps);
-      ns sample_elapsed = 0ns;
-      ns avg_elapsed = 0ns;
-      for (auto price : GBM) {
-        auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL;
-        auto p = ceil(price * 10'000) / 10'000;
-        auto q = double(rand() % 10 + 1) / (rand() % 20 + 1);
-        auto order = std::make_shared<Order>(std::to_string(id++), p, q, side);
-        auto start = Time::now();
-        ob->match(order);
-        auto elapsed = Time::now() - start;
-        sample_elapsed += elapsed;
-      }
-      S0 = ob->best_sell();
-      console->info("Time elapsed: {} sec.", sample_elapsed.count() / 1e+9);
-      console->info("Sample size: {}", GBM.size());
-      std::this_thread::sleep_for(5s);
+      while (true) {
+        double mu = double(rand() % 2 + 1) / 10'000 *
+                    (rand() % 2 ? 1 : -1); // add rand drift (+/-)0.01-0.02%
+        double sigma = 0.008 + double(rand() % 2 + 1) /
+                                   1'000; // flat 0.8% vol + rand 0.1-0.2%
+        double T = 1;
+        int steps = 1e5 - 1;
+        std::vector<double> GBM = geoBrownian(S0, mu, sigma, T, steps);
+        ns sample_elapsed = 0ns;
+        ns avg_elapsed = 0ns;
+        for (auto price : GBM) {
+          auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL;
+          auto p = ceil(price * 10'000) / 10'000;
+          auto q = double(rand() % 10 + 1) / (rand() % 20 + 1);
+          auto order =
+              std::make_shared<Order>(std::to_string(id++), p, q, side);
+          auto start = Time::now();
+          ob->match(order);
+          auto elapsed = Time::now() - start;
+          sample_elapsed += elapsed;
+        }
+        S0 = ob->best_sell();
+        console->info("Time elapsed: {} sec.", sample_elapsed.count() / 1e+9);
+        console->info("Sample size: {}", GBM.size());
+        std::this_thread::sleep_for(5s);
       }
     };
     auto ticker = [&]() {
