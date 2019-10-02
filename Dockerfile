@@ -19,8 +19,9 @@ RUN conan profile update env.CC=gcc default
 RUN conan profile update env.CXX=g++ default
 RUN conan profile update env.CXXFLAGS=-std=c++17 default
 RUN conan remote add ess-dmsc https://api.bintray.com/conan/ess-dmsc/conan
+RUN conan remote add inexorgame https://api.bintray.com/conan/inexorgame/inexor-conan
 ENV CXXFLAGS=-std=c++17
 ENV CC=gcc
 ENV CXX=g++
 
-EXPOSE 8080 9000
+EXPOSE 9001 8080

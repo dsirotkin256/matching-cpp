@@ -8,6 +8,7 @@ endif()
 
 cmake_minimum_required (VERSION 3.10)
 project(MatchingEngine)
+
 include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
 
 find_package(Threads REQUIRED)

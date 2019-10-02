@@ -260,13 +260,16 @@ public:
     std::shared_lock<std::shared_mutex> l{m_};
     std::vector<snapshot_point> snapshot;
     auto traverse = [&](const auto &tree, const SIDE &side) {
+      auto limit = 0;
       for (auto &&node : tree) {
         snapshot_point point;
         point.side = side;
         point.price = node.first;
         point.cumulative_quantity = node.second.accumulate();
         point.size = node.second.size();
-        snapshot.push_back(point);
+        snapshot.emplace_back(point);
+        limit++;
+        if (limit >= 10) break;
       }
     };
     traverse(buy_tree_, SIDE::BUY);

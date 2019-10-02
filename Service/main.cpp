@@ -171,22 +171,23 @@ int main(int argc, char *argv[]) {
   auto ob = std::make_shared<OrderBook>();
   try {
     boost::asio::io_context ioc;
-    auto port = 9000;
+    auto port = 8080;
     MatchingServer s(ioc, port, ob, console);
     console->info("Matching Service is running on port {}", port);
 
     auto simulate = [&]() {
-      double S0 = 1.0;
-      double mu = 0;
-      double sigma = 0.05;
+      double S0 = 8.60;
+      while(true) {
+      double mu = double(rand() % 2 + 1)/10'000 * (rand() % 2 ? 1 : -1); // add rand drift (+/-)0.01-0.02%
+      double sigma = 0.008 + double(rand() % 2 + 1)/1'000; // flat 0.8% vol + rand 0.1-0.2%
       double T = 1;
-      int steps = 1e+6 - 1;
+      int steps = 1e5 - 1;
       std::vector<double> GBM = geoBrownian(S0, mu, sigma, T, steps);
       ns sample_elapsed = 0ns;
       ns avg_elapsed = 0ns;
       for (auto price : GBM) {
         auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL;
-        auto p = ceil(price * 10000) / 10000;
+        auto p = ceil(price * 10'000) / 10'000;
         auto q = double(rand() % 10 + 1) / (rand() % 20 + 1);
         auto order = std::make_shared<Order>(std::to_string(id++), p, q, side);
         auto start = Time::now();
@@ -194,28 +195,34 @@ int main(int argc, char *argv[]) {
         auto elapsed = Time::now() - start;
         sample_elapsed += elapsed;
       }
+      S0 = ob->best_sell();
       console->info("Time elapsed: {} sec.", sample_elapsed.count() / 1e+9);
       console->info("Sample size: {}", GBM.size());
-      exit(EXIT_SUCCESS);
+      std::this_thread::sleep_for(5s);
+      }
     };
     auto ticker = [&]() {
       auto tick_logger =
           spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
               "tick_log", "feed.csv", true);
       tick_logger->set_pattern("%E.%F,%v");
+      auto pbs = ob->best_sell();
+      auto pbb = ob->best_buy();
       while (true) {
         auto bb = ob->best_buy();
         auto bs = ob->best_sell();
-        if (bb and bs) {
+        if ((bb && bs && pbs && pbb) && bb != pbb || bs != pbs) {
           tick_logger->info("{},{}", bb, bs);
         }
         tick_logger->flush();
-        std::this_thread::sleep_for(1s);
+        pbb = bb;
+        pbs = bs;
+        std::this_thread::sleep_for(500ms);
       }
     };
     auto snapshot = [&]() {
       while (true) {
-        /* Destroy existing snapshot file on every iteration */
+        // Destroy existing snapshot file on every iteration
         auto ob_logger =
             spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
                 "orderbook_log", "snapshot.csv", true);
@@ -226,12 +233,13 @@ int main(int argc, char *argv[]) {
         }
         ob_logger->flush();
         spdlog::drop("orderbook_log");
-        std::this_thread::sleep_for(5s);
+        std::this_thread::sleep_for(500ms);
       }
     };
     std::thread(simulate).detach();
     std::thread(ticker).detach();
     std::thread(snapshot).detach();
+
     ioc.run();
   } catch (std::exception &e) {
     console->error(e.what());
