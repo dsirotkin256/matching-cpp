@@ -201,20 +201,20 @@ int main(int argc, char *argv[]) {
         S0 = ob->best_sell();
         console->info("Time elapsed: {} sec.", sample_elapsed.count() / 1e+9);
         console->info("Sample size: {}", GBM.size());
-        std::this_thread::sleep_for(5s);
+        std::this_thread::sleep_for(50ms);
       }
     };
     auto ticker = [&]() {
       auto tick_logger =
           spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
               "tick_log", "feed.csv", true);
-      tick_logger->set_pattern("%E.%F,%v");
+      tick_logger->set_pattern("%E%e,%v");
       auto pbs = ob->best_sell();
       auto pbb = ob->best_buy();
       while (true) {
         auto bb = ob->best_buy();
         auto bs = ob->best_sell();
-        if ((bb && bs && pbs && pbb) && bb != pbb || bs != pbs) {
+        if ((bb && bs && pbs && pbb) && bs != pbs) {
           tick_logger->info("{},{}", bb, bs);
         }
         tick_logger->flush();
