@@ -220,7 +220,7 @@ int main(int argc, char *argv[]) {
         tick_logger->flush();
         pbb = bb;
         pbs = bs;
-        std::this_thread::sleep_for(500ms);
+        std::this_thread::sleep_for(200ms);
       }
     };
     auto snapshot = [&]() {

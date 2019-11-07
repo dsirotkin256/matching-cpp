@@ -6,7 +6,6 @@ add_library(matching ${MATCHING_SOURCES})
 target_link_libraries(
     matching
     PUBLIC
-    CONAN_PKG::jemalloc
     CONAN_PKG::spdlog
 )
 
