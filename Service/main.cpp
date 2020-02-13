@@ -207,7 +207,7 @@ int main(int argc, char *argv[]) {
     auto ticker = [&]() {
       auto tick_logger =
           spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
-              "tick_log", "feed.csv", true);
+              "tick_log", "data/feed.csv", true);
       tick_logger->set_pattern("%E%e,%v");
       auto pbs = ob->best_sell();
       auto pbb = ob->best_buy();
@@ -220,7 +220,7 @@ int main(int argc, char *argv[]) {
         tick_logger->flush();
         pbb = bb;
         pbs = bs;
-        std::this_thread::sleep_for(200ms);
+        std::this_thread::sleep_for(500ms);
       }
     };
     auto snapshot = [&]() {
@@ -228,7 +228,7 @@ int main(int argc, char *argv[]) {
         // Destroy existing snapshot file on every iteration
         auto ob_logger =
             spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
-                "orderbook_log", "snapshot.csv", true);
+                "orderbook_log", "data/snapshot.csv", true);
         ob_logger->set_pattern("%v");
         for (auto point : ob->snapshot()) {
           ob_logger->info("{},{},{},{}", point.side, point.price,
