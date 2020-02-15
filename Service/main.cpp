@@ -15,12 +15,15 @@
 #include <ctime>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <map>
+#include <math.h>
 #include <memory>
 #include <mutex>
 #include <numeric>
 #include <sstream>
 #include <vector>
+#include <nlohmann/json.hpp>
 
 using namespace matching_engine;
 using namespace std::chrono_literals;
@@ -165,6 +168,7 @@ private:
 };
 
 int main(int argc, char *argv[]) {
+  std::cout << nlohmann::json::parse("{\"json\": 1,\"is_running\": true}");
   spdlog::init_thread_pool(32768, std::thread::hardware_concurrency());
   auto console =
       spdlog::create_async<spdlog::sinks::stdout_color_sink_mt>("console");
@@ -183,7 +187,7 @@ int main(int argc, char *argv[]) {
         double sigma = 0.008 + double(rand() % 2 + 1) /
                                    1'000; // flat 0.8% vol + rand 0.1-0.2%
         double T = 1;
-        int steps = 1e5 - 1;
+        int steps = 5e6 - 1;
         std::vector<double> GBM = geoBrownian(S0, mu, sigma, T, steps);
         ns sample_elapsed = 0ns;
         ns avg_elapsed = 0ns;
@@ -201,7 +205,7 @@ int main(int argc, char *argv[]) {
         S0 = ob->best_sell();
         console->info("Time elapsed: {} sec.", sample_elapsed.count() / 1e+9);
         console->info("Sample size: {}", GBM.size());
-        std::this_thread::sleep_for(50ms);
+        std::this_thread::sleep_for(500ms);
       }
     };
     auto ticker = [&]() {

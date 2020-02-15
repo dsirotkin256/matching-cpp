@@ -39,5 +39,7 @@ add_subdirectory(Matching)
 
 add_subdirectory(Service)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 enable_testing()
 
