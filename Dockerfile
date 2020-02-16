@@ -10,7 +10,7 @@ RUN apt -y update
 RUN apt -y install gdb cmake vim lsof strace htop sudo iftop curl tmux
 RUN apt install -y python3-pip && pip3 install pip && pip3 install conan
 RUN apt -y upgrade
-RUN mkdir -p /opt/matching/builder/
+RUN mkdir -p /opt/matching/build/
 WORKDIR /opt/matching/
 RUN conan profile show default || conan profile new default --detect
 RUN conan profile update settings.compiler=gcc default
@@ -23,5 +23,5 @@ RUN conan remote add conan-center https://api.bintray.com/conan/conan/conan-cent
 ENV CXXFLAGS=-std=c++17
 ENV CC=gcc
 ENV CXX=g++
-
 EXPOSE 9001 8080
+RUN /opt/matching/scripts/build.sh

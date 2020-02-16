@@ -7,6 +7,7 @@ target_link_libraries(
     matching
     PUBLIC
     CONAN_PKG::spdlog
+    CONAN_PKG::jemalloc
 )
 
 target_include_directories(
