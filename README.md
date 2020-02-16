@@ -20,7 +20,7 @@ gdb --tui ./build/bin/matcher
 ## Rebuild and tag a new image
 
 ```bash
-docker build -t nrdwnd/exchange:latest .
+docker build -it nrdwnd/exchange:latest .
 ```
 
 ## Run the image in a container
