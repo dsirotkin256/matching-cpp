@@ -15,7 +15,7 @@
 ### Debug
 
 ```bash
-lldb ./build/bin/matcher
+gdb --tui ./build/bin/matcher
 ```
 
 # Docker setup
