@@ -17,7 +17,7 @@ gdb --tui ./build/bin/matcher
 
 # Docker setup
 
-## Build and tag a new image
+## Rebuild and tag a new image
 
 ```bash
 docker build -t nrdwnd/exchange:latest .
@@ -25,7 +25,12 @@ docker build -t nrdwnd/exchange:latest .
 
 ## Run the image in a container
 
-Create a fresh container (`strace` enabled):
+Create a fresh container and run in interactive mode:
+```bash
+docker run -it nrdwnd/exchange:latest
+```
+
+Enabled security features for hacking/debugging:
 ```bash
 docker run -it --privileged -v ${PWD}:/opt/matching --cap-add=SYS_PTRACE --security-opt seccomp=unconfined nrdwnd/exchange:latest
 ```
