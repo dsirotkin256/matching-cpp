@@ -34,7 +34,6 @@ Start the existing container in interactive mode:
 ```bash
 docker container start -i <CONTAINER_ID>
 ```
-```
 
 # Matching Service
 Order-matching engine — provides access to liquidity book and coordinates live orders
