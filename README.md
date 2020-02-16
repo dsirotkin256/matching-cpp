@@ -1,47 +1,39 @@
 # Setup
 
-### Build
-
+## Rebuild the project
 ```bash
-./build.sh
+./scripts/build.sh
 ```
 
-### Run
-
+## Start the engine
 ```bash
 ./build/bin/matcher
 ```
 
-### Debug
-
+## Debugging
 ```bash
 gdb --tui ./build/bin/matcher
 ```
 
 # Docker setup
 
-### Build
+## Build and tag a new image
 
 ```bash
-docker build -t matcher .
+docker build -t nrdwnd/exchange:latest .
 ```
 
-### Run
+## Run the image in a container
 
-In image in fresh container:
+Create a fresh container (`strace` enabled):
 ```bash
-docker run -it --privileged -v ${PWD}:/opt/matching --cap-add=SYS_PTRACE --security-opt seccomp=unconfined matcher /bin/bash
+docker run -it --privileged -v ${PWD}:/opt/matching --cap-add=SYS_PTRACE --security-opt seccomp=unconfined nrdwnd/exchange:latest
 ```
 
-In the existing one:
+Start the existing container in interactive mode:
 ```bash
 docker container start -i <CONTAINER_ID>
 ```
-
-### Debug
-
-```bash
-lldb-5.0 ./build/bin/matcher
 ```
 
 # Matching Service
