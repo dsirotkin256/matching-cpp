@@ -12,7 +12,7 @@ RUN apt install -y python3-pip && pip3 install pip && pip3 install conan
 RUN apt -y upgrade
 RUN mkdir -p /opt/matching/build/
 WORKDIR /opt/matching/
-RUN conan profile show default || conan profile new default --detect
+RUN conan profile new default --detect
 RUN conan profile update settings.compiler=gcc default
 RUN conan profile update settings.compiler.version=8 default
 RUN conan profile update settings.compiler.libcxx=libstdc++11 default
@@ -23,4 +23,5 @@ ENV CXXFLAGS=-std=c++17
 ENV CC=gcc
 ENV CXX=g++
 EXPOSE 9001 8080
+ADD . /opt/matching
 RUN /opt/matching/scripts/build.sh
