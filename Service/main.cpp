@@ -187,7 +187,7 @@ int main(int argc, char *argv[]) {
         double sigma = 0.008 + double(rand() % 2 + 1) /
                                    1'000; // flat 0.8% vol + rand 0.1-0.2%
         double T = 1;
-        int steps = 1e6;
+        int steps = 1e6 - 1;
         std::vector<double> GBM = geoBrownian(S0, mu, sigma, T, steps);
         ns sample_elapsed = 0ns;
         ns avg_elapsed = 0ns;
