@@ -14,14 +14,14 @@ RUN mkdir -p /opt/matching/build/
 WORKDIR /opt/matching/
 RUN conan profile new default --detect
 RUN conan profile update settings.compiler=gcc default
-RUN conan profile update settings.compiler.version=8 default
+RUN conan profile update settings.compiler.version=8.3 default
 RUN conan profile update settings.compiler.libcxx=libstdc++11 default
 RUN conan profile update env.CC=gcc default
 RUN conan profile update env.CXX=g++ default
 RUN conan profile update env.CXXFLAGS=-std=c++17 default
 ENV CXXFLAGS=-std=c++17
-ENV CC=gcc
-ENV CXX=g++
+ENV CC=/usr/bin/gcc
+ENV CXX=/usr/bin/g++
 EXPOSE 9001 8080
 ADD . /opt/matching
 RUN /opt/matching/scripts/build.sh

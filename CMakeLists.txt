@@ -13,14 +13,20 @@ include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
 
 find_package(Threads REQUIRED)
 
+find_program(CCACHE_FOUND ccache)
+if(CCACHE_FOUND)
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_FOUND}")
+endif()
+
 option(ENABLE_TESTS "Build tests" NO)
 option(ENABLE_EXAMPLES "Build examples" NO)
 option(ENABLE_BENCHMARKS "Build benchmarks" NO)
 
 # Compiler configuration
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free -march=native -mtune=native -O3 -fexceptions -Wdeprecated -Wno-switch-enum -Wno-float-equal -Wno-unused-parameter -Wno-unused-member-function -Wno-exit-time-destructors -Wno-documentation-unknown-command -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-disabled-macro-expansion -Wno-weak-vtables -Wno-padded -fno-omit-frame-pointer -Werror -lpthread -ljemalloc")
-set(CMAKE_BUILD_TYPE Debug)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions -Wdeprecated -Wno-switch-enum -Wno-float-equal -Wno-unused-parameter -Wno-unused-member-function -Werror -lpthread -ljemalloc")
+
+set(CMAKE_BUILD_TYPE Development)
 
 set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
 set(CMAKE_HAVE_THREADS_LIBRARY TRUE)
