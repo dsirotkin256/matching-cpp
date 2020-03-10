@@ -168,7 +168,7 @@ private:
 };
 
 int main(int argc, char *argv[]) {
-  std::cout << nlohmann::json::parse("{\"json\": 1,\"is_running\": true}");
+  std::cout << nlohmann::json::parse("{\"json\": 1,\"is_running\": true}") << std::endl;
   spdlog::init_thread_pool(32768, std::thread::hardware_concurrency());
   auto console =
       spdlog::create_async<spdlog::sinks::stdout_color_sink_mt>("console");
