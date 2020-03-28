@@ -32,7 +32,7 @@ docker run -it nrdwnd/exchange:latest
 
 Enabled security features for hacking/debugging:
 ```bash
-docker run -it --privileged -v ${PWD}:/opt/matching --cap-add=SYS_PTRACE --security-opt seccomp=unconfined nrdwnd/exchange:latest
+docker run -it -p9000:8080 --privileged -v ${PWD}:/opt/matching --cap-add=SYS_PTRACE --security-opt seccomp=unconfined nrdwnd/exchange:latest
 ```
 
 Start the existing container in interactive mode:

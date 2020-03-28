@@ -24,7 +24,7 @@ option(ENABLE_BENCHMARKS "Build benchmarks" NO)
 
 # Compiler configuration
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -fexceptions -Wdeprecated -Wextra -Wno-switch-enum -Wno-float-equal -Wno-unused-parameter -Wno-unused-member-function -Werror -fno-omit-frame-pointer -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free -lpthread")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions -Wdeprecated -Wextra -Wno-switch-enum -Wno-float-equal -Wno-unused-parameter -Wno-unused-member-function -Werror -fno-omit-frame-pointer -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free -lpthread")
 
 set(CMAKE_BUILD_TYPE Development)
 
