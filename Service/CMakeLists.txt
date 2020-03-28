@@ -12,6 +12,8 @@ target_link_libraries(
         Threads::Threads
         CONAN_PKG::boost
         CONAN_PKG::nlohmann_json
+        CONAN_PKG::jemalloc
+        CONAN_PKG::tbb
 )
 
 if(ENABLE_TESTS)

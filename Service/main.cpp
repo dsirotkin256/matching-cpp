@@ -24,6 +24,10 @@
 #include <sstream>
 #include <vector>
 #include <nlohmann/json.hpp>
+#include "influxdb.hpp"
+#include "tbb/concurrent_queue.h"
+#include "tbb/concurrent_unordered_map.h"
+
 
 using namespace matching_engine;
 using namespace std::chrono_literals;
@@ -36,221 +40,309 @@ using response_t = http::response<boost::beast::http::string_body>;
 
 std::atomic_ullong id = 0;
 
-class TcpConnectionHandler
-    : public std::enable_shared_from_this<TcpConnectionHandler> {
-public:
-  TcpConnectionHandler(boost::asio::io_context &ioc,
-                       const std::shared_ptr<OrderBook> &ob,
-                       const std::shared_ptr<spdlog::logger> logger)
-      : strand_{std::make_unique<boost::asio::io_context::strand>(ioc)},
-        socket_{ioc}, work_{ioc}, ob_{ob}, logger_{logger} {}
+class market_consumer {
+  public:
+    market_consumer(const std::string& market_name):
+      should_exit_{false}, ob_(market_name) {}
+    market_consumer(const market_consumer&) = delete;
+    void shutdown() {
+      should_exit_ = true;
+    }
+    std::string market_name() const {
+      return ob_.market_name();
+    }
+    void push(OrderPtr order) {
+      queue_.push(std::move(order));
+    }
+    void listen() {
+      OrderPtr order;
+      auto last_log = Time::now();
+      while(should_consume_()) {
+        if (!queue_.try_pop(order)) continue;
+        auto start = Time::now();
+        ob_.match(std::move(order));
+        auto elapsed = Time::now() - start;
+        /* Post consumer stats */
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(start.time_since_epoch()).count() - std::chrono::duration_cast<std::chrono::milliseconds>(last_log.time_since_epoch()).count() >= 250) {
+          influxdb_cpp::builder()
+            .meas("order_matcher")
+            .tag("language", "c++")
+            .tag("service", "matching")
+            .tag("market", ob_.market_name())
+            .field("execution_duration", std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count())
+            .field("consumer_queue_length", (long)queue_.unsafe_size())
+            .field("total_orders_processed", (long long)id)
+            .timestamp(std::chrono::duration_cast<std::chrono::nanoseconds>(Time::now().time_since_epoch()).count())
+            .send_udp("172.17.0.1", 8089);
+          last_log = start;
+        }
+      }
+    }
+  private:
+    bool should_consume_() const {
+      return !should_exit_ or !queue_.empty();
+    }
+    OrderBook ob_;
+    tbb::concurrent_queue<OrderPtr> queue_;
+    std::atomic_bool should_exit_;
+};
 
-  void dispatch() {
-    auto self = shared_from_this();
-    http::async_read(
-        socket_, buffer_, request_,
-        [this, self](boost::system::error_code ec, std::size_t) {
-          if (ec == boost::beast::http::error::end_of_stream)
-            return;
-          if (ec) {
-            logger_->error("HTTP async read: {}", ec.message());
-            return;
+class order_dispatcher {
+  public:
+    order_dispatcher(const order_dispatcher&) = delete;
+    order_dispatcher() {}
+    void register_market_consumer(std::shared_ptr<market_consumer> consumer) {
+      market_registry_[consumer->market_name()] = std::move(consumer);
+    }
+    void send(OrderPtr order, bool relaxed = true) {
+      auto& consumer = market_registry_.at(order->market_name());
+      consumer->push(std::move(order));
+    }
+  private:
+    tbb::concurrent_unordered_map<std::string, std::shared_ptr<market_consumer>> market_registry_;
+};
+
+class tcp_connection_handler
+: public std::enable_shared_from_this<tcp_connection_handler> {
+  public:
+    tcp_connection_handler(boost::asio::io_context &ioc,
+        const std::shared_ptr<order_dispatcher> dispatcher,
+        const std::shared_ptr<spdlog::logger> logger)
+      : strand_{std::make_unique<boost::asio::io_context::strand>(ioc)},
+      socket_{ioc}, work_{ioc}, dispatcher_{dispatcher}, logger_{logger} {}
+
+    tcp_connection_handler(const tcp_connection_handler&) = delete;
+
+    void dispatch() {
+      auto self = shared_from_this();
+      http::async_read(
+          socket_, buffer_, request_,
+          [this, self](boost::system::error_code ec, std::size_t) {
+          if (ec == http::error::end_of_stream) {
+          return;
           }
-          logger_->info("HTTP async read: {}", request_.target().to_string());
+          if (ec) {
+          logger_->error("tcp_connection_handler::async_read: {}", ec.message());
+          return;
+          }
+          //logger_->info("tcp_connection_handler::async_read: {}", request_.target().to_string());
 
           std::string target = request_.target().to_string();
           boost::trim_if(target, [](auto ch) { return ch == '/'; });
           std::vector<std::string> params;
           boost::split(params, target, [](auto ch) { return ch == '/'; },
-                       boost::token_compress_on);
+              boost::token_compress_on);
 
           std::ostringstream ss;
-          if (params.size() < 3) {
-            logger_->warn("HTTP async read: invalid request");
-            ss << "Invalid request" << std::endl;
+          if (params.size() < 4 or target.find("favicon.ico") != std::string::npos) {
+          logger_->warn("tcp_connection_handler::async_read: Invalid request");
+          ss << nlohmann::json::parse("{\"target\":\""+target+"\",\"status\": \"FAILED\",\"origin\":\"" +
+              boost::lexical_cast<std::string>(socket_.remote_endpoint()) + "\"}");
           } else {
             SIDE side = params[0] == "BUY" ? SIDE::BUY : SIDE::SELL;
-            Price price = std::stod(params[1]);
-            Price quantity = std::stod(params[2]);
-            auto order = std::make_shared<Order>(std::to_string(id++), price,
-                                                 quantity, side);
-            auto start = Time::now();
-            bool result = ob_->match(order);
-            auto elapsed = Time::now() - start;
-            ss << "Request: " << target << "<br>"
-               << "Order: {" << *order << "}<br>"
-               << "Matching result: " << result << "<br>"
-               << "Elapsed time: " << elapsed.count() / 1e+9 << " sec. <br>";
+            std::string market = params[1];
+            Price price = std::stod(params[2]);
+            double quantity = std::stod(params[3]);
+            auto order_id = id++;
+            dispatcher_->send(std::move(std::make_unique<Order>(market, order_id, price,
+                    quantity, side)));
+            ss << nlohmann::json::parse(
+                "{\"target\":\"" + target + "\"," +
+                "\"order_id\":" + std::to_string(order_id) + "," +
+                "\"status\": \"OK\"," +
+                "\"origin\":\"" + boost::lexical_cast<std::string>(socket_.remote_endpoint()) + "\"}");
+            //"\"order_submitted\":" + std::to_string(was_sent) + "," +
           }
           self->strand_->dispatch([self, res = ss.str()] { self->reply(res); });
-        });
-  }
+          });
+    }
 
-  tcp::socket &socket() { return socket_; }
+    tcp::socket &socket() { return socket_; }
 
-  void start() {
-    strand_->dispatch([self = shared_from_this()] { self->dispatch(); });
-  }
+    void start() {
+      strand_->dispatch([self = shared_from_this()] { self->dispatch(); });
+    }
 
-private:
-  response_t static build_response(http::status status, std::string msg,
-                                   http::request<http::string_body> &req) {
-    response_t res{status, req.version()};
-    res.set(http::field::server, BOOST_BEAST_VERSION_STRING);
-    res.set(http::field::content_type, "text/html");
-    res.keep_alive(req.keep_alive());
-    res.body() = std::move(msg);
-    res.prepare_payload();
-    return res;
-  }
+  private:
+    response_t static build_response(http::status status, std::string msg,
+        http::request<http::string_body> &req) {
+      response_t res{status, req.version()};
+      res.set(http::field::server, BOOST_BEAST_VERSION_STRING);
+      res.set(http::field::content_type, "application/json");
+      res.keep_alive(req.keep_alive());
+      res.body() = std::move(msg);
+      res.prepare_payload();
+      return res;
+    }
 
-  void reply(std::string body) {
-    auto self = shared_from_this();
-    auto response = std::make_shared<response_t>(
-        build_response(http::status::ok, body, request_));
-    http::async_write(
-        socket_, *response,
-        [this, self, response](boost::system::error_code ec, std::size_t) {
+    void reply(std::string body) {
+      auto self = shared_from_this();
+      auto response = std::make_shared<response_t>(
+          build_response(http::status::ok, body, request_));
+      http::async_write(
+          socket_, *response,
+          [this, self, response](boost::system::error_code ec, std::size_t) {
           if (ec) {
-            logger_->error("HTTP async_write: {}", ec.message());
-            return;
+          logger_->error("tcp_server::async_write: {}", ec.message());
+          return;
           }
           if (response->need_eof())
-            return;
+          return;
 
           if (!ec)
-            self->strand_->dispatch([self] { self->dispatch(); });
-        });
-  }
+          self->strand_->dispatch([self] { self->dispatch(); });
+          });
+    }
 
-  tcp::socket socket_;
-  std::unique_ptr<boost::asio::io_context::strand> strand_;
-  boost::asio::io_context::work work_;
-  boost::beast::flat_buffer buffer_;
-  request_t request_;
-  std::shared_ptr<OrderBook> ob_;
-  std::shared_ptr<spdlog::logger> logger_;
+    tcp::socket socket_;
+    std::unique_ptr<boost::asio::io_context::strand> strand_;
+    boost::asio::io_context::work work_;
+    boost::beast::flat_buffer buffer_;
+    request_t request_;
+    std::shared_ptr<order_dispatcher> dispatcher_;
+    std::shared_ptr<spdlog::logger> logger_;
 };
 
-class MatchingServer {
-public:
-  MatchingServer(boost::asio::io_context &ioc, const short &port,
-                 const std::shared_ptr<OrderBook> ob,
-                 const std::shared_ptr<spdlog::logger> logger)
-      : ioc_{ioc}, acceptor_{ioc, tcp::endpoint(tcp::v4(), port)}, ob_{ob},
-        logger_{logger} {
-    acceptor_.set_option(tcp::acceptor::reuse_address(true));
-    acceptor_.listen(boost::asio::socket_base::max_listen_connections);
-    accept();
-  }
+class tcp_server {
+  public:
+    tcp_server(boost::asio::io_context &ioc, const short port,
+        const std::shared_ptr<order_dispatcher> dispatcher,
+        const std::shared_ptr<spdlog::logger> logger = 
+        spdlog::create_async<spdlog::sinks::stdout_color_sink_mt>("console"))
+      : ioc_{ioc}, acceptor_{ioc, tcp::endpoint(tcp::v6(), port)},
+      dispatcher_{dispatcher}, logger_{logger} {
+        acceptor_.set_option(tcp::acceptor::reuse_address(true));
+      }
+    tcp_server(const tcp_server&) = delete;
 
-private:
-  void accept() {
-    auto conn = std::make_shared<TcpConnectionHandler>(ioc_, ob_, logger_);
-    acceptor_.async_accept(
-        conn->socket(), [this, conn](boost::system::error_code ec) {
-          logger_->info("HTTP async accpet: {}",
-                        boost::lexical_cast<std::string>(
-                            conn->socket().remote_endpoint()));
-          if (ec)
-            logger_->error("HTTP async accept: {}", ec.message());
-          else
-            conn->dispatch();
+    void async_start() {
+      const auto endpoint = boost::lexical_cast<std::string>(acceptor_.local_endpoint());
+      acceptor_.listen(boost::asio::socket_base::max_listen_connections);
+      if (acceptor_.is_open()) {
+        logger_->info("tcp_server::start: started on {}", endpoint);
+      } else {
+        logger_->warn("tcp_server::start: failed to start on {}", endpoint);
+      }
+      async_accept();
+    }
+    boost::system::error_code shutdown() {
+      boost::system::error_code ec;
+      acceptor_.close(ec);
+      return ec;
+    }
 
-          accept();
-        });
-  }
+  private:
+    void async_accept() {
+      auto handler = std::make_shared<tcp_connection_handler>(ioc_, dispatcher_, logger_);
+      acceptor_.async_accept(
+          handler->socket(), [this, handler](boost::system::error_code ec) {
+          //logger_->info("tcp_server::async_accept: {}",
+          //    boost::lexical_cast<std::string>(
+          //      handler->socket().remote_endpoint()));
+          if (ec) {
+          logger_->error("tcp_server::async_accept: {}", ec.message());
+          } else {
+          handler->dispatch();
+          }
+          async_accept();
+          });
+    }
 
-  tcp::acceptor acceptor_;
-  boost::asio::io_context &ioc_;
-  std::shared_ptr<OrderBook> ob_;
-  std::shared_ptr<spdlog::logger> logger_;
+    tcp::acceptor acceptor_;
+    boost::asio::io_context &ioc_;
+    std::shared_ptr<spdlog::logger> logger_;
+    std::shared_ptr<order_dispatcher> dispatcher_;
 };
 
 int main(int argc, char *argv[]) {
-  std::cout << nlohmann::json::parse("{\"json\": 1,\"is_running\": true}") << std::endl;
+  /* Initialise logging service */
   spdlog::init_thread_pool(32768, std::thread::hardware_concurrency());
-  auto console =
-      spdlog::create_async<spdlog::sinks::stdout_color_sink_mt>("console");
-  auto ob = std::make_shared<OrderBook>();
-  try {
-    boost::asio::io_context ioc;
-    auto port = 8080;
-    MatchingServer s(ioc, port, ob, console);
-    console->info("Matching Service is running on port {}", port);
+  spdlog::flush_every(std::chrono::seconds(1));
+  const auto console =
+    spdlog::create_async<spdlog::sinks::stdout_color_sink_mt>("console");
 
-    auto simulate = [&]() {
-      double S0 = 8.60;
-      while (true) {
-        double mu = double(rand() % 2 + 1) / 10'000 *
-                    (rand() % 2 ? 1 : -1); // add rand drift (+/-)0.01-0.02%
-        double sigma = 0.008 + double(rand() % 2 + 1) /
-                                   1'000; // flat 0.8% vol + rand 0.1-0.2%
-        double T = 1;
-        int steps = 1e6 - 1;
-        std::vector<double> GBM = geoBrownian(S0, mu, sigma, T, steps);
-        ns sample_elapsed = 0ns;
-        ns avg_elapsed = 0ns;
-        for (auto price : GBM) {
-          auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL;
-          auto p = ceil(price * 10'000) / 10'000;
-          auto q = double(rand() % 10 + 1) / (rand() % 20 + 1);
-          auto order =
-              std::make_shared<Order>(std::to_string(id++), p, q, side);
-          auto start = Time::now();
-          ob->match(order);
-          auto elapsed = Time::now() - start;
-          sample_elapsed += elapsed;
-        }
-        S0 = ob->best_sell();
-        console->info("Time elapsed: {} sec.", sample_elapsed.count() / 1e+9);
-        console->info("Sample size: {}", GBM.size());
-        std::this_thread::sleep_for(500ms);
-      }
-    };
-    auto ticker = [&]() {
-      auto tick_logger =
-          spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
-              "tick_log", "data/feed.csv", true);
-      tick_logger->set_pattern("%E%e,%v");
-      auto pbs = ob->best_sell();
-      auto pbb = ob->best_buy();
-      while (true) {
-        auto bb = ob->best_buy();
-        auto bs = ob->best_sell();
-        if ((bb && bs && pbs && pbb) && bs != pbs) {
-          tick_logger->info("{},{}", bb, bs);
-        }
-        tick_logger->flush();
-        pbb = bb;
-        pbs = bs;
-        std::this_thread::sleep_for(500ms);
-      }
-    };
-    auto snapshot = [&]() {
-      while (true) {
-        // Destroy existing snapshot file on every iteration
-        auto ob_logger =
-            spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
-                "orderbook_log", "data/snapshot.csv", true);
-        ob_logger->set_pattern("%v");
-        for (auto point : ob->snapshot()) {
-          ob_logger->info("{},{},{},{}", point.side, point.price,
-                          point.cumulative_quantity, point.size);
-        }
-        ob_logger->flush();
-        spdlog::drop("orderbook_log");
-        std::this_thread::sleep_for(500ms);
-      }
-    };
-    std::thread(simulate).detach();
-    std::thread(ticker).detach();
-    std::thread(snapshot).detach();
-
-    ioc.run();
-  } catch (std::exception &e) {
-    console->error(e.what());
+  /* Initialise order dispatching service */
+  auto pool = boost::asio::thread_pool(std::thread::hardware_concurrency());
+  std::vector<std::string> markets({"USD_JPY", "BTC_USD", "CHF_USD"});
+  auto dispatcher = std::make_shared<order_dispatcher>();
+  for (const auto& market : markets) {
+    auto consumer = std::make_shared<market_consumer>(market);
+    dispatcher->register_market_consumer(consumer);
+    /* Activate consumer */
+    boost::asio::post(pool, std::bind(&market_consumer::listen, consumer));
   }
+
+  /* Initialise TCP transport layer */
+  boost::asio::io_context ioc{(int)std::thread::hardware_concurrency()};
+  tcp_server server(ioc, 8080, dispatcher, console);
+  server.async_start();
+
+  const auto produce_orders = [&](std::string market) {
+    double S0 = 80;
+    while (true) {
+      double mu = double(rand() % 5 + 1) / 100 *
+        (rand() % 2 ? 1 : -1); // add rand drift
+      double sigma = 0.08 + double(rand() % 2 + 1) /
+        1000; // flat vol + rand
+      double T = 1;
+      int steps = 1e6 - 1;
+      std::vector<double> GBM = geoBrownian(S0, mu, sigma, T, steps);
+      for (auto price : GBM) {
+        auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL;
+        auto q = double(rand() % 10 + 1) / (rand() % 20 + 1);
+        auto order = std::make_unique<Order>(market, id++, price, q, side);
+        dispatcher->send(std::move(order));
+      }
+    }
+  };
+  /*
+     const auto tick_writer = [&] {
+     auto tick_logger =
+     spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
+     "tick_log", "data/feed.csv", true);
+     tick_logger->set_pattern("%E%e,%v");
+     auto pbs = ob->best_sell();
+     auto pbb = ob->best_buy();
+     while (true) {
+     auto bb = ob->best_buy();
+     auto bs = ob->best_sell();
+     if ((bb && bs && pbs && pbb) && bs != pbs) {
+     tick_logger->info("{},{}", bb, bs);
+     }
+     pbb = bb;
+     pbs = bs;
+     std::this_thread::sleep_for(500ms);
+     }
+     };
+     */
+  /*
+     const auto snapshot_writer = [&] {
+     while (true) {
+  // Destroy existing snapshot file on every iteration
+  auto ob_logger =
+  spdlog::create_async<spdlog::sinks::basic_file_sink_mt>(
+  "orderbook_log", "data/snapshot.csv", true);
+  ob_logger->set_pattern("%v");
+  for (auto point : ob->snapshot()) {
+  ob_logger->info("{},{},{},{}", point.side, point.price,
+  point.cumulative_quantity, point.size);
+  }
+  spdlog::drop("orderbook_log");
+  std::this_thread::sleep_for(500ms);
+  }
+  };
+  */
+  //boost::asio::post(pool, tick_writer);
+  //boost::asio::post(pool, snapshot_writer);
+
+  //for (const auto& market : markets)
+  //  boost::asio::post(pool, [&]{produce_orders(market);});
+  boost::asio::post(pool, [&]{ioc.run();});
+  boost::asio::post(pool, [&]{ioc.run();});
+  boost::asio::post(pool, [&]{ioc.run();});
+  ioc.run();
+
+  pool.join();
 
   return 0;
 }

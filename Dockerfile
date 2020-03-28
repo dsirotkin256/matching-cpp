@@ -5,7 +5,7 @@ ENV TZ=GMT
 RUN apt -y update \
  && apt -y dist-upgrade
 RUN apt -y install software-properties-common build-essential linux-perf net-tools
-RUN apt -y install libpthread-stubs0-dev libjemalloc-dev g++ ccache
+RUN apt -y install libpthread-stubs0-dev g++ ccache
 RUN apt -y update
 RUN apt -y install gdb cmake vim lsof strace htop sudo iftop curl tmux
 RUN apt install -y python3-pip && pip3 install pip && pip3 install conan

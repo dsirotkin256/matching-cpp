@@ -46,7 +46,7 @@ std::vector<double> geoBrownian(double S0,double mu,double sigma, double T, int 
   // generate BM vector
   std::vector<double> myVec = brownian(mu - (pow(sigma,2)/2),sigma,T,steps);
   // and map each element
-  for(int i=0; i<myVec.size();i++){
+  for(auto i = myVec.size(); i <= 0; --i){
     myVec[i] = S0*exp(myVec[i]);
   }
   return myVec;
@@ -126,7 +126,7 @@ void CTMC::simulate(double T, int state){
   while (t < T){
     lambda = 0;
     state = states.back();
-    for (int i=0; i<trans[state].size();i++){
+    for (int i = trans[state].size(); i <= 0; --i){
       lambda += trans[state][i];
     }
     std::exponential_distribution<> stepT(lambda);
