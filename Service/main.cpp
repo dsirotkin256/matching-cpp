@@ -27,7 +27,10 @@
 #include "influxdb.hpp"
 #include "tbb/concurrent_queue.h"
 #include "tbb/concurrent_unordered_map.h"
-
+#include <folly/concurrency/UnboundedQueue.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <pthread.h>
 
 using namespace matching_engine;
 using namespace std::chrono_literals;
@@ -52,28 +55,31 @@ class market_consumer {
       return ob_.market_name();
     }
     void push(OrderPtr order) {
-      queue_.push(std::move(order));
+      queue_.enqueue(std::move(order));
     }
     void listen() {
+      std::cout << "Consumer of " << ob_.market_name() << " started at T " << (pid_t) syscall (SYS_gettid) << std::endl;
       OrderPtr order;
       auto last_log = Time::now();
       while(should_consume_()) {
-        if (!queue_.try_pop(order)) continue;
+        queue_.dequeue(order);
         auto start = Time::now();
         ob_.match(std::move(order));
         auto elapsed = Time::now() - start;
         /* Post consumer stats */
         if (std::chrono::duration_cast<std::chrono::milliseconds>(start.time_since_epoch()).count() - std::chrono::duration_cast<std::chrono::milliseconds>(last_log.time_since_epoch()).count() >= 250) {
+          std::async(std::launch::async,[&,elapsed] {
           influxdb_cpp::builder()
             .meas("order_matcher")
             .tag("language", "c++")
             .tag("service", "matching")
             .tag("market", ob_.market_name())
             .field("execution_duration", std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count())
-            .field("consumer_queue_length", (long)queue_.unsafe_size())
-            .field("total_orders_processed", (long long)id)
+            .field("consumer_queue_length", (long)queue_.size())
+            .field("total_orders_processed", (long)id)
             .timestamp(std::chrono::duration_cast<std::chrono::nanoseconds>(Time::now().time_since_epoch()).count())
             .send_udp("172.17.0.1", 8089);
+          });
           last_log = start;
         }
       }
@@ -83,7 +89,7 @@ class market_consumer {
       return !should_exit_ or !queue_.empty();
     }
     OrderBook ob_;
-    tbb::concurrent_queue<OrderPtr> queue_;
+    folly::UnboundedQueue<OrderPtr, true, true, true, 16> queue_;
     std::atomic_bool should_exit_;
 };
 
@@ -133,11 +139,13 @@ class tcp_connection_handler
           boost::split(params, target, [](auto ch) { return ch == '/'; },
               boost::token_compress_on);
 
-          std::ostringstream ss;
+          //std::ostringstream ss;
+          http::status status;
           if (params.size() < 4 or target.find("favicon.ico") != std::string::npos) {
           logger_->warn("tcp_connection_handler::async_read: Invalid request");
-          ss << nlohmann::json::parse("{\"target\":\""+target+"\",\"status\": \"FAILED\",\"origin\":\"" +
-              boost::lexical_cast<std::string>(socket_.remote_endpoint()) + "\"}");
+          //ss << nlohmann::json::parse("{\"target\":\""+target+"\",\"status\": \"FAILED\",\"origin\":\"" +
+          //    boost::lexical_cast<std::string>(socket_.remote_endpoint()) + "\"}");
+            status = http::status::bad_request;
           } else {
             SIDE side = params[0] == "BUY" ? SIDE::BUY : SIDE::SELL;
             std::string market = params[1];
@@ -146,14 +154,17 @@ class tcp_connection_handler
             auto order_id = id++;
             dispatcher_->send(std::move(std::make_unique<Order>(market, order_id, price,
                     quantity, side)));
-            ss << nlohmann::json::parse(
+            status = http::status::ok;
+            //ss << "{\"status\": \"OK\"}";
+            /*ss << nlohmann::json::parse(
                 "{\"target\":\"" + target + "\"," +
                 "\"order_id\":" + std::to_string(order_id) + "," +
                 "\"status\": \"OK\"," +
                 "\"origin\":\"" + boost::lexical_cast<std::string>(socket_.remote_endpoint()) + "\"}");
             //"\"order_submitted\":" + std::to_string(was_sent) + "," +
+            */
           }
-          self->strand_->dispatch([self, res = ss.str()] { self->reply(res); });
+          self->strand_->dispatch([self, status] { self->reply(status); });
           });
     }
 
@@ -164,21 +175,21 @@ class tcp_connection_handler
     }
 
   private:
-    response_t static build_response(http::status status, std::string msg,
+    response_t static build_response(http::status status,
         http::request<http::string_body> &req) {
       response_t res{status, req.version()};
-      res.set(http::field::server, BOOST_BEAST_VERSION_STRING);
+      //res.set(http::field::server, BOOST_BEAST_VERSION_STRING);
       res.set(http::field::content_type, "application/json");
       res.keep_alive(req.keep_alive());
-      res.body() = std::move(msg);
+      //res.body() = std::string(msg);
       res.prepare_payload();
       return res;
     }
 
-    void reply(std::string body) {
+    void reply(http::status status) {
       auto self = shared_from_this();
       auto response = std::make_shared<response_t>(
-          build_response(http::status::ok, body, request_));
+          build_response(status, request_));
       http::async_write(
           socket_, *response,
           [this, self, response](boost::system::error_code ec, std::size_t) {
@@ -262,8 +273,8 @@ int main(int argc, char *argv[]) {
     spdlog::create_async<spdlog::sinks::stdout_color_sink_mt>("console");
 
   /* Initialise order dispatching service */
-  auto pool = boost::asio::thread_pool(std::thread::hardware_concurrency());
-  std::vector<std::string> markets({"USD_JPY", "BTC_USD", "CHF_USD"});
+  auto pool = boost::asio::thread_pool(std::thread::hardware_concurrency()+100);
+  std::vector<std::string> markets({"BTC_USD", "EUR_GBP", "AUD_USD", "GBP_USD", "NZD_USD", "USD_CHF", "EUR_AUD", "GBP_JPY", "USD_JPY"});
   auto dispatcher = std::make_shared<order_dispatcher>();
   for (const auto& market : markets) {
     auto consumer = std::make_shared<market_consumer>(market);
@@ -335,8 +346,9 @@ int main(int argc, char *argv[]) {
   //boost::asio::post(pool, tick_writer);
   //boost::asio::post(pool, snapshot_writer);
 
-  //for (const auto& market : markets)
-  //  boost::asio::post(pool, [&]{produce_orders(market);});
+  for (const auto& market : markets)
+    boost::asio::post(pool, [&]{produce_orders(market);});
+
   boost::asio::post(pool, [&]{ioc.run();});
   boost::asio::post(pool, [&]{ioc.run();});
   boost::asio::post(pool, [&]{ioc.run();});

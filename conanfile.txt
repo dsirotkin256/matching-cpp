@@ -5,6 +5,7 @@ spdlog/1.5.0
 nlohmann_json/3.7.3
 jemalloc/5.2.1
 tbb/2020.0
+folly/2018.11.12.00@bincrafters/stable
 
 [generators]
 txt

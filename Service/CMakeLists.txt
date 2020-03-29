@@ -14,6 +14,7 @@ target_link_libraries(
         CONAN_PKG::nlohmann_json
         CONAN_PKG::jemalloc
         CONAN_PKG::tbb
+        CONAN_PKG::folly
 )
 
 if(ENABLE_TESTS)
