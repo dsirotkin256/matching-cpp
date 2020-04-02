@@ -41,6 +41,6 @@ static void OrderMatching(benchmark::State& state) {
     }
   }
 }
-BENCHMARK(OrderMatching)->DenseRange(0, 1000000, 100000);
+BENCHMARK(OrderMatching)->DenseRange(0, 1000, 250);
 // Run the benchmark
 BENCHMARK_MAIN();
