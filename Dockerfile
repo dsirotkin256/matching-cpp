@@ -24,4 +24,4 @@ ENV CC=/usr/bin/gcc
 ENV CXX=/usr/bin/g++
 EXPOSE 9001 8080
 ADD . /opt/matching
-RUN /opt/matching/scripts/build.sh
+RUN make BUILD_TYPE="Release"
