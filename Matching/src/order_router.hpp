@@ -29,7 +29,7 @@ namespace matching_engine {
         void push(OrderPtr order) {
           queue_.enqueue(std::move(order));
         }
-        void register_market(std::string market) {
+        void register_market(std::string_view market) {
           markets.emplace(market, market);
         }
         void listen() {
@@ -40,20 +40,20 @@ namespace matching_engine {
           auto last_log = Time::now();
           while(should_consume_()) {
             queue_.dequeue(order);
-            auto &&ob = markets.at(order->market_name());
+            auto &ob = markets.at(order->market_name());
             const auto start = Time::now();
             ob.match(std::move(order));
             auto elapsed = Time::now() - start;
             /* Post consumer stats */
-            if (std::chrono::duration_cast<ms>(start.time_since_epoch()).count() - std::chrono::duration_cast<ms>(last_log.time_since_epoch()).count() >= 250) {
-              std::async(std::launch::async,[&,market=ob.market_name(),elapsed] { /* NOTE Does it actually make sense to use async here?*/
+            if (std::chrono::duration_cast<ms>(start.time_since_epoch()).count() 
+                - std::chrono::duration_cast<ms>(last_log.time_since_epoch()).count() >= 250) {
+              std::async(std::launch::async,[&,market=ob.market_name(),elapsed] { 
+                  /* NOTE Does it actually make sense to use async here?*/
                   influxdb_cpp::builder()
                   .meas("order_matcher")
-                  .tag("language", "c++")
-                  .tag("service", "matching")
-                  .tag("market", market)
+                  .tag("market", market.data())
                   .field("execution_duration", std::chrono::duration_cast<ns>(elapsed).count())
-                  .field("consumer_queue_length", (long)queue_.size())
+                  .field("consumer_queue_length", static_cast<long>(queue_.size()))
                   .timestamp(std::chrono::duration_cast<ns>(Time::now().time_since_epoch()).count())
                   .send_udp("172.17.0.1", 8089);
                   });
@@ -65,7 +65,7 @@ namespace matching_engine {
         bool should_consume_() const {
           return !should_exit_ or !queue_.empty();
         }
-        std::unordered_map<std::string, OrderBook> markets;
+        std::unordered_map<std::string_view, OrderBook> markets;
         folly::UnboundedQueue<OrderPtr, true, true, true, 16> queue_;
         //boost::lockfree::queue<OrderPtr> queue_;
         std::atomic_bool should_exit_;
@@ -76,14 +76,15 @@ namespace matching_engine {
       public:
         dispatcher() = default;
         dispatcher(const dispatcher&) = delete;
-        dispatcher(std::shared_ptr<boost::asio::thread_pool> pool,
-            std::shared_ptr<spdlog::logger> console,
-            std::vector<std::string> markets): console_{console} {
-          const auto cores = std::thread::hardware_concurrency();
-          const auto markets_per_core = uint64_t(markets.size() / cores);
-          auto reminder = markets.size() % cores;
+        dispatcher(std::shared_ptr<spdlog::logger> console,
+            std::vector<std::string_view> markets,
+            const uint64_t available_cores = std::max(1u, std::thread::hardware_concurrency() - 1)):
+          pool_{available_cores},
+          console_{console} {
+          const auto markets_per_core = uint64_t(markets.size() / available_cores);
+          auto reminder = markets.size() % available_cores;
           std::vector<std::shared_ptr<consumer>> consumer_pool;
-          for (unsigned int core = 0; core < cores; core++) {
+          for (unsigned int core = 0; core < available_cores; core++) {
             consumer_pool.emplace_back(std::make_shared<consumer>(console_));
             auto& market_consumer = consumer_pool.back();
             if (reminder > 0) {
@@ -102,16 +103,20 @@ namespace matching_engine {
             }
           }
           for (auto& c : consumer_pool) {
-            boost::asio::post(*pool, std::bind(&consumer::listen, c));
+            boost::asio::post(pool_, std::bind(&consumer::listen, c));
           }
         }
         void send(OrderPtr order) {
           auto& market_consumer = market_registry_.at(order->market_name());
           market_consumer->push(std::move(order));
         }
+        std::string_view registered_market_name(std::string_view market) const {
+          return market_registry_.find(market)->first;
+        }
       private:
         //tbb::concurrent_unordered_map<std::string, std::shared_ptr<consumer>> market_registry_;
-        std::unordered_map<std::string, std::shared_ptr<consumer>> market_registry_;
+        std::unordered_map<std::string_view, std::shared_ptr<consumer>> market_registry_;
+        boost::asio::thread_pool pool_;
         std::shared_ptr<spdlog::logger> console_;
     };
   } // namespace router

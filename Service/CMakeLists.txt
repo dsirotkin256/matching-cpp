@@ -10,12 +10,7 @@ target_link_libraries(
   matching_service
   PRIVATE
     matching
-    Threads::Threads
-    CONAN_PKG::boost
-    CONAN_PKG::nlohmann_json
     CONAN_PKG::jemalloc
-    CONAN_PKG::tbb
-    CONAN_PKG::folly
 )
 
 set_target_properties(service PROPERTIES LINKER_LANGUAGE CXX)

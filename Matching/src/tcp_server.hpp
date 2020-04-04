@@ -8,6 +8,8 @@
 #include <boost/lexical_cast.hpp>
 #include <nlohmann/json.hpp>
 #include <order_router.hpp>
+#include <charconv>
+#include <utility>
 
 namespace matching_engine {
   namespace tcp {
@@ -41,34 +43,34 @@ namespace matching_engine {
                 }
                 //logger_->info("connection_handler::async_read: {}", request_.target().to_string());
 
-                std::string target = request_.target().to_string();
-                boost::trim_if(target, [](auto ch) { return ch == '/'; });
-                std::vector<std::string> params;
-                boost::split(params, target, [](auto ch) { return ch == '/'; },
-                    boost::token_compress_on);
+                std::string_view target = request_.target();
+                //boost::trim_if(target, [](auto ch) { return ch == '/'; });
+                std::vector<std::string_view> params;
+                //boost::split(params, target, [](auto ch) { return ch == '/'; },
+                //    boost::token_compress_on);
+
+                size_t first = 0;
+                while (first < target.size()) { 
+                  const auto second = target.find_first_of('/', first);
+                  if (first != second) params.emplace_back(target.substr(first, second-first));
+                  if (second == std::string_view::npos) break;
+                  first = second + 1; 
+                }
 
                 //std::ostringstream ss;
                 http::status status;
-                if (params.size() < 4 or target.find("favicon.ico") != std::string::npos) {
+                if (params.size() < 4 or target.find(u8"favicon.ico") != std::string_view::npos) {
                   console_->warn("connection_handler::async_read: Invalid request");
                   //ss << nlohmann::json::parse("{\"target\":\""+target+"\",\"status\": \"FAILED\",\"origin\":\"" +
                   //    boost::lexical_cast<std::string>(socket_.remote_endpoint()) + "\"}");
                   status = http::status::bad_request;
                 } else {
-                  SIDE side = params[0] == "BUY" ? SIDE::BUY : SIDE::SELL;
-                  std::string market = params[1];
-                  Price price = std::stod(params[2]);
-                  double quantity = std::stod(params[3]);
+                  SIDE side = params[0] == u8"BUY" ? SIDE::BUY : SIDE::SELL;
+                  std::string_view market = dispatcher_->registered_market_name(params[1]);
+                  Price price = std::stod(params[2].data());
+                  Quantity quantity = std::stod(params[3].data());
                   dispatcher_->send(std::move(std::make_unique<Order>(market, side, price, quantity)));
                   status = http::status::ok;
-                  //ss << "{\"status\": \"OK\"}";
-                  /*ss << nlohmann::json::parse(
-                    "{\"target\":\"" + target + "\"," +
-                    "\"order_id\":" + std::to_string(order_id) + "," +
-                    "\"status\": \"OK\"," +
-                    "\"origin\":\"" + boost::lexical_cast<std::string>(socket_.remote_endpoint()) + "\"}");
-                  //"\"order_submitted\":" + std::to_string(was_sent) + "," +
-                  */
                 }
                 self->strand_->dispatch([self, status] { self->reply(status); });
                 });
@@ -125,11 +127,16 @@ namespace matching_engine {
         server(boost::asio::io_context &ioc,
             const std::shared_ptr<router::dispatcher> dispatcher,
             const std::shared_ptr<spdlog::logger> console,
-            const short port = 8080)
+            const short port = 8080,
+            const uint64_t available_cores = std::max(1u, std::thread::hardware_concurrency() - 1))
           : ioc_{ioc}, acceptor_{ioc, tcp::endpoint(tcp::v6(), port)},
-          dispatcher_{dispatcher}, console_{console} {
+          dispatcher_{dispatcher}, console_{console}, pool_{available_cores} {
             acceptor_.set_option(tcp::acceptor::reuse_address(true));
             async_start_();
+            /* Start event loop for all threads */
+            for (auto core = available_cores; core > 0; --core) {
+              boost::asio::post(pool_, [&]{ioc.run();});
+            }
           }
         server(const server&) = delete;
 
@@ -170,6 +177,7 @@ namespace matching_engine {
         boost::asio::io_context &ioc_;
         std::shared_ptr<router::dispatcher> dispatcher_;
         const std::shared_ptr<spdlog::logger> console_;
+        boost::asio::thread_pool pool_;
     };
   } // namespace tcp
 } // namespace matching_engine

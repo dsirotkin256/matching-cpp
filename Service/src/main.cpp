@@ -12,6 +12,12 @@
 #include <memory>
 #include <numeric>
 #include <sstream>
+#include <string_view>
+#include <iostream>
+#include <iterator>
+#include <memory>
+#include <numeric>
+#include <sstream>
 #include <orderbook.hpp>
 #include <tcp_server.hpp>
 #include <order_router.hpp>
@@ -21,34 +27,33 @@ namespace me = matching_engine;
 
 int main(int argc, char *argv[]) {
   /* Initialise logging service */
-  spdlog::init_thread_pool(32768, std::thread::hardware_concurrency());
+  spdlog::init_thread_pool(32768, std::max(1u, std::thread::hardware_concurrency() - 1));
   spdlog::flush_every(1s);
   const auto console = spdlog::create_async<spdlog::sinks::stdout_color_sink_mt>("console");
 
   /* Initialise order dispatching service */
-  auto pool = std::make_shared<boost::asio::thread_pool>(std::thread::hardware_concurrency());
-  std::vector<std::string> markets = {
-    "BTC_USD", "EUR_GBP", "AUD_USD",
-    "GBP_USD", "NZD_USD", "USD_CHF",
-    "EUR_AUD", "GBP_JPY", "USD_JPY"
+  const std::vector<std::string_view> markets = {
+    u8"EUR_USD", u8"GBP_USD", u8"AUD_USD", u8"NZD_USD",
+    u8"EUR_GBP",
+    u8"USD_CHF",
+    u8"USD_CAD",
+    u8"EUR_AUD",
+    u8"GBP_JPY", u8"USD_JPY"
   };
-  auto dispatcher = std::make_shared<me::router::dispatcher>(pool, console, markets);
+  auto dispatcher = std::make_shared<me::router::dispatcher>(console, markets);
 
   /* Initialise TCP transport layer */
   boost::asio::io_context ioc{(int)std::thread::hardware_concurrency()};
   me::tcp::server server(ioc, dispatcher, console);
 
-  /* Start event loop */
-  for (auto core = std::thread::hardware_concurrency(); core > 0; --core) {
-    boost::asio::post(*pool, [&]{ioc.run();});
-  }
+  std::thread([]{std::this_thread::sleep_for(std::chrono::seconds(10)); exit(EXIT_SUCCESS);}).detach();
+
   ioc.run();
 
   /* 
    * Join threads after event loop termination 
    * TODO notify market consumers to stop
    * */
-  pool->join();
 
   return 0;
 }

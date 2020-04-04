@@ -7,8 +7,7 @@ target_link_libraries(
   benchmark
   PRIVATE
     matching
-    Threads::Threads
-    CONAN_PKG::jemalloc
     CONAN_PKG::benchmark
+    CONAN_PKG::jemalloc
 )
 

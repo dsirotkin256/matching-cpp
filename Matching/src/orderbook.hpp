@@ -13,6 +13,7 @@
 #include <queue>
 #include <shared_mutex>
 #include <vector>
+#include <string_view>
 #include "tbb/parallel_reduce.h"
 #include "tbb/blocked_range.h"
 #include <boost/container/map.hpp>
@@ -41,7 +42,7 @@ namespace matching_engine {
 
   class Order {
     private:
-      const std::string market_name_; /* TODO Replace with std::string_view */
+      const std::string_view market_name_; /* TODO Replace with std::string_view */
       const SIDE side_;
       const Price price_;
       const Quantity quantity_;
@@ -51,7 +52,7 @@ namespace matching_engine {
       Quantity executed_quantity_;
       const TimePoint created_;
     public:
-      Order(const std::string &market_name,
+      Order(const std::string_view &market_name,
           const SIDE &side,
           const Price &price,
           const Quantity &quantity,
@@ -73,7 +74,7 @@ namespace matching_engine {
       Order(const Order &) = delete;
       ~Order() = default;
 
-      std::string market_name() const;
+      std::string_view market_name() const;
       UUID uuid() const;
       void uuid(UUID);
       Quantity quantity() const;
@@ -109,7 +110,7 @@ namespace matching_engine {
 
   class OrderBook {
     private:
-      const std::string market_name_;
+      const std::string_view market_name_;
       struct Comp {
         enum compare_type { less, greater };
         explicit Comp(compare_type t) : type(t) {}
@@ -124,7 +125,7 @@ namespace matching_engine {
     public:
       order_tree_type buy_tree_;
       order_tree_type sell_tree_;
-      OrderBook(const std::string market_name):
+      OrderBook(const std::string_view market_name):
         market_name_{market_name},
         buy_tree_{OrderBook::Comp{OrderBook::Comp::greater}},
         sell_tree_{OrderBook::Comp{OrderBook::Comp::less}} {}
@@ -137,7 +138,7 @@ namespace matching_engine {
       Price best_sell() const;
       Price quote() const;
       Price spread() const;
-      std::string market_name() const;
+      std::string_view market_name() const;
       struct snapshot_point {
         Price price;
         Quantity cumulative_quantity;
@@ -147,7 +148,7 @@ namespace matching_engine {
       std::vector<snapshot_point> snapshot() const;
   };
 
-  std::string Order::market_name() const { return market_name_; }
+  std::string_view Order::market_name() const { return market_name_; }
   Quantity Order::quantity() const { return quantity_; }
   UUID Order::uuid() const { return uuid_; }
   Price Order::price() const { return price_; }
@@ -214,7 +215,7 @@ namespace matching_engine {
     }
   }
 
-  std::string OrderBook::market_name() const {
+  std::string_view OrderBook::market_name() const {
     return market_name_;
   }
 
@@ -224,14 +225,13 @@ namespace matching_engine {
     src->state(STATE::ACTIVE);
 
     auto should_exit_tree = false;
-    auto node = begin(dist_tree);
-    while (!should_exit_tree && node != end(dist_tree)) {
+    for (auto node = dist_tree.begin(), end = dist_tree.end();
+        !should_exit_tree && node != end;) {
       auto &&dist_queue = node->second;
       /* Buy cheap; sell expensive – conduct price improvement */
       if (src->is_buy() ? src->price() >= node->first
           : src->price() <= node->first) {
-        bool exit_queue = false;
-        while (!exit_queue && !dist_queue.empty()) {
+        for (auto exit_queue = false; !exit_queue && !dist_queue.empty();) {
           auto dist = dist_queue.front().get();
           auto leftover = dist->leftover() - src->leftover();
 
@@ -239,10 +239,12 @@ namespace matching_engine {
           if (leftover >= 0) {
             src->execute(src->leftover());
             src->state(STATE::FULFILLED);
-
-            if (leftover == 0) { /* Exact match */
+            /* Exact match */
+            if (leftover == 0) {
               dist->execute(dist->leftover());
-            } else { /* Partial match */
+            } 
+            /* Partial match */
+            else {
               dist->execute(dist->leftover() - leftover);
             }
             /* Remove fulfilled order from queue */
@@ -250,7 +252,6 @@ namespace matching_engine {
               dist->state(STATE::FULFILLED);
               dist_queue.pop_front();
             }
-
             /* Matching is complete */
             exit_queue = true;
             should_exit_tree = true;
@@ -266,7 +267,8 @@ namespace matching_engine {
           }
         }
         /* Try next price node */
-        if (dist_queue.empty()) { /* Purge the price point with empty queue */
+        if (dist_queue.empty()) {
+          /* Purge the price point with empty queue */
           node = dist_tree.erase(node++);
         } else {
           ++node;
@@ -277,7 +279,7 @@ namespace matching_engine {
     }
     /* Not enough resources to fulfill the order; push to source tree */
     if (src->leftover() > 0) {
-      const auto &node = src_tree.find(src->price());
+      auto const& node = src_tree.find(src->price());
       if (node == src_tree.end()) { /* Create new price node */
         src_tree.emplace_hint(
             node,
