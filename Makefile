@@ -10,6 +10,10 @@ build: clean
 	make -C $(BUILD_DIR) -j $(shell nproc)
 	conan remove -f -s -b -- '*'
 
+tidy:
+	astyle --style=linux --exclude=build --recursive *.cpp,*.c,*.h,*.hpp
+	find . -type f -name '*.orig' -delete
+
 clean:
 	rm -rf $(BUILD_DIR)
 	conan remove -f -s -b -- '*'
