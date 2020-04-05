@@ -2,7 +2,7 @@ BUILD_DIR = build
 DEBUG_DIR = Debug
 FLAMEGRAPH = lib/FlameGraph
 
-.PHONY: clean build test bench start release
+.PHONY: build
 
 build: clean
 	conan install . -if $(BUILD_DIR) --build=missing
