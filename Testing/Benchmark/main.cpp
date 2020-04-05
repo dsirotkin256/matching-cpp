@@ -23,10 +23,17 @@ static void OrderCreation(benchmark::State& state)
     Price price = rand() % 100 + 1;
     Quantity quantity = double(rand() % 100 + 1) / (rand() % 20 + 1);
     for (auto _ : state) {
+        auto start = std::chrono::high_resolution_clock::now();
         auto order = std::make_unique<Order>(market, side, price, quantity);
+        auto end = std::chrono::high_resolution_clock::now();
+        auto elapsed_seconds =
+            std::chrono::duration_cast<std::chrono::duration<double>>(
+                end - start);
+        state.SetIterationTime(elapsed_seconds.count());
     }
+    state.SetComplexityN(state.range(0));
 }
-BENCHMARK(OrderCreation)->DenseRange(0, 1000, 250);
+BENCHMARK(OrderCreation)->DenseRange(1, 1000, 250)->UseManualTime()->Complexity(benchmark::oN);
 
 static void OrderMatching(benchmark::State& state)
 {
@@ -39,11 +46,38 @@ static void OrderMatching(benchmark::State& state)
             auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL;
             auto quantity = double(rand() % 10 + 1) / (rand() % 20 + 1);
             auto order = std::make_unique<Order>(market, side, price, quantity);
-            //dispatcher->send(std::move(order));
+            auto start = std::chrono::high_resolution_clock::now();
             ob.match(std::move(order));
+            auto end = std::chrono::high_resolution_clock::now();
+            auto elapsed_seconds =
+                std::chrono::duration_cast<std::chrono::duration<double>>(
+                    end - start);
+            state.SetIterationTime(elapsed_seconds.count());
         }
     }
+    state.SetComplexityN(state.range(0));
 }
-BENCHMARK(OrderMatching)->DenseRange(0, 1000, 250);
-// Run the benchmark
+BENCHMARK(OrderMatching)->DenseRange(1, 1000, 250)->UseManualTime()->Complexity(benchmark::oLogN);
+
+// TODO Starts and hangs, issue with thread pool. Fix it.
+static void OrderDispatching(benchmark::State& state)
+{
+    // Perform setup here
+    const std::vector<std::string_view> markets = {u8"USD_JPY"};
+    auto dispatcher = std::make_shared<router::dispatcher>(markets);
+    auto prices = SimulateMarket(state.range(0));
+    for(auto _ : state) {
+        for (auto price : prices) {
+            auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL;
+            auto quantity = double(rand() % 10 + 1) / (rand() % 20 + 1);
+            auto order = std::make_unique<Order>(markets[0], side, price, quantity);
+            dispatcher->send(std::move(order));
+        }
+    }
+    dispatcher->shutdown();
+}
+
+//BENCHMARK(OrderDispatching)->DenseRange(0, 1000, 250)->MeasureProcessCPUTime();
+
+/* Run the benchmark */
 BENCHMARK_MAIN();

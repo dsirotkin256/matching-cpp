@@ -92,7 +92,7 @@ public:
     bool operator==(const Order &rhs) const;
 };
 
-using OrderPtr = std::unique_ptr<Order>;
+using OrderPtr = std::shared_ptr<Order>;
 
 using queue_allocator = boost::container::allocator<OrderPtr>;
 using order_queue_type = boost::container::deque<OrderPtr, queue_allocator>;

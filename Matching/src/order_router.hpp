@@ -3,15 +3,13 @@
 #include <orderbook.hpp>
 #include "influxdb.hpp"
 #include "spdlog/spdlog.h"
-#include <future>
 #include <sys/types.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <map>
-#include <folly/concurrency/UnboundedQueue.h>
 #include <boost/asio.hpp>
 #include <boost/asio/thread_pool.hpp>
-//#include <boost/lockfree/queue.hpp>
+#include <tbb/concurrent_queue.h>
 
 namespace matching_engine
 {
@@ -32,7 +30,7 @@ public:
     }
     void push(OrderPtr order)
     {
-        queue_.enqueue(std::move(order));
+        queue_.push(std::move(order));
     }
     void register_market(std::string_view market)
     {
@@ -40,13 +38,14 @@ public:
     }
     void listen()
     {
-        for (const auto& [name, _] : markets) {
-            console_->info("Consumer of {} started @{}", name, (pid_t) syscall (SYS_gettid));
-        }
+        if (console_ != nullptr)
+            for (const auto& [name, _] : markets) {
+                console_->info("Consumer of {} started @{}", name, (pid_t) syscall (SYS_gettid));
+            }
         OrderPtr order;
         auto last_log = Time::now();
         while(should_consume_()) {
-            queue_.dequeue(order);
+            queue_.pop(order);
             auto &ob = markets.at(order->market_name());
             const auto start = Time::now();
             ob.match(std::move(order));
@@ -66,6 +65,7 @@ public:
                 });
                 last_log = start;
             }
+
         }
     }
 private:
@@ -74,8 +74,7 @@ private:
         return !should_exit_ or !queue_.empty();
     }
     std::unordered_map<std::string_view, OrderBook> markets;
-    folly::UnboundedQueue<OrderPtr, true, true, true, 16> queue_;
-    //boost::lockfree::queue<OrderPtr> queue_;
+    tbb::concurrent_bounded_queue<OrderPtr> queue_;
     std::atomic_bool should_exit_;
     std::shared_ptr<spdlog::logger> console_;
 };
@@ -85,8 +84,8 @@ class dispatcher
 public:
     dispatcher() = default;
     dispatcher(const dispatcher&) = delete;
-    dispatcher(std::shared_ptr<spdlog::logger> console,
-               std::vector<std::string_view> markets,
+    dispatcher(std::vector<std::string_view> markets,
+               std::shared_ptr<spdlog::logger> console = nullptr,
                const uint64_t available_cores = std::max(1u, std::thread::hardware_concurrency() - 1)):
         pool_{available_cores},
         console_{console}
@@ -121,9 +120,16 @@ public:
         auto& market_consumer = market_registry_.at(order->market_name());
         market_consumer->push(std::move(order));
     }
-    std::string_view registered_market_name(std::string_view market) const
+    std::string_view registered_market_name(const std::string_view market) const
     {
         return market_registry_.find(market)->first;
+    }
+    void shutdown()
+    {
+        for (auto const& [_, c] : market_registry_) {
+            c->shutdown();
+        }
+        pool_.join();
     }
 private:
     //tbb::concurrent_unordered_map<std::string, std::shared_ptr<consumer>> market_registry_;

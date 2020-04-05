@@ -9,8 +9,8 @@ add_executable(
 target_link_libraries(
   matching_service
   PRIVATE
-    matching
-    CONAN_PKG::jemalloc
+  matching
+  CONAN_PKG::jemalloc
 )
 
 set_target_properties(service PROPERTIES LINKER_LANGUAGE CXX)

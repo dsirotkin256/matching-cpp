@@ -41,7 +41,7 @@ int main(int argc, char *argv[])
         u8"EUR_AUD",
         u8"GBP_JPY", u8"USD_JPY"
     };
-    auto dispatcher = std::make_shared<me::router::dispatcher>(console, markets);
+    auto dispatcher = std::make_shared<me::router::dispatcher>(markets, console);
 
     /* Initialise TCP transport layer */
     boost::asio::io_context ioc{(int)std::thread::hardware_concurrency()};
