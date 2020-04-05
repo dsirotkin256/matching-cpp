@@ -25,3 +25,4 @@ ENV CXX=/usr/bin/g++
 EXPOSE 9001 8080
 ADD . /opt/matching
 RUN make BUILD_TYPE="Release"
+RUN make test
