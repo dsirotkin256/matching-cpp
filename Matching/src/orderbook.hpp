@@ -17,6 +17,7 @@
 #include "tbb/parallel_reduce.h"
 #include "tbb/blocked_range.h"
 #include <boost/container/map.hpp>
+#include <boost/container/flat_map.hpp>
 #include <boost/container/deque.hpp>
 #include <boost/container/adaptive_pool.hpp>
 #include <boost/container/allocator.hpp>
@@ -127,8 +128,7 @@ private:
         }
         compare_type type;
     };
-    using map_allocator = boost::container::adaptive_pool<std::pair<const Price, OrderQueue>>;
-    using order_tree_type = boost::container::map<Price, OrderQueue, Comp, map_allocator>;
+    using order_tree_type = boost::container::flat_map<Price, OrderQueue, Comp>;
     order_tree_type buy_tree_;
     order_tree_type sell_tree_;
 public:
