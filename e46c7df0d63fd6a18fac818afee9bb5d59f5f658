@@ -1,1 +1,3 @@
-Test note
+Droped Intel's TBB blocking concurrent queue variant as it requires enqueuing elements by value.
+Replaced with moodyqueue - a simular alternative which appears to be a copy-free library, it does handle move semantics and accepts rvalue as an argument for enqueuing.
+Hence, we can use unique_ptr<Order> for OrderPtr system-wide.
