@@ -74,6 +74,7 @@ public:
         created_{created} {}
     Order() = delete;
     Order(const Order &) = delete;
+    Order& operator=(const Order&) = delete;
     ~Order() = default;
 
     std::string_view market_name() const;
@@ -92,7 +93,7 @@ public:
     bool operator==(const Order &rhs) const;
 };
 
-using OrderPtr = std::shared_ptr<Order>;
+using OrderPtr = std::unique_ptr<Order>;
 
 using queue_allocator = boost::container::allocator<OrderPtr>;
 using order_queue_type = boost::container::deque<OrderPtr, queue_allocator>;
@@ -103,6 +104,7 @@ class OrderQueue
 public:
     OrderQueue() = default;
     OrderQueue(const OrderQueue &) = delete;
+    OrderQueue& operator=(const OrderQueue&) = delete;
     template <typename order_type>
     OrderQueue(order_type order);
     template <typename order_type, typename... args>
@@ -127,14 +129,17 @@ private:
     };
     using map_allocator = boost::container::adaptive_pool<std::pair<const Price, OrderQueue>>;
     using order_tree_type = boost::container::map<Price, OrderQueue, Comp, map_allocator>;
-public:
     order_tree_type buy_tree_;
     order_tree_type sell_tree_;
+public:
     OrderBook(const std::string_view market_name):
         market_name_{market_name},
         buy_tree_{OrderBook::Comp{OrderBook::Comp::greater}},
-        sell_tree_{OrderBook::Comp{OrderBook::Comp::less}} {}
+        sell_tree_{OrderBook::Comp{OrderBook::Comp::less}}
+    {
+    }
     OrderBook(const OrderBook &) = delete;
+    OrderBook& operator=(const OrderBook&) = delete;
     OrderBook() = delete;
     ~OrderBook() = default;
     bool cancel(const UUID uuid, SIDE side, Price price_node_hint);
@@ -262,8 +267,8 @@ std::string_view OrderBook::market_name() const
 
 bool OrderBook::match(OrderPtr src)
 {
-    auto &src_tree = src->is_buy() ? buy_tree_ : sell_tree_;
-    auto &dist_tree = src->is_buy() ? sell_tree_ : buy_tree_;
+    auto &&src_tree = src->is_buy() ? buy_tree_ : sell_tree_;
+    auto &&dist_tree = src->is_buy() ? sell_tree_ : buy_tree_;
     src->state(STATE::ACTIVE);
 
     auto should_exit_tree = false;
@@ -339,15 +344,15 @@ bool OrderBook::match(OrderPtr src)
 Price OrderBook::best_buy() const
 {
     return !buy_tree_.empty()
-           ? begin(buy_tree_)->first
-           : !sell_tree_.empty() ? begin(sell_tree_)->first : 0;
+           ? buy_tree_.begin()->first
+           : !sell_tree_.empty() ? sell_tree_.begin()->first : 0;
 }
 
 Price OrderBook::best_sell() const
 {
     return !sell_tree_.empty()
-           ? begin(sell_tree_)->first
-           : !buy_tree_.empty() ? begin(buy_tree_)->first : 0;
+           ? sell_tree_.begin()->first
+           : !buy_tree_.empty() ? buy_tree_.begin()->first : 0;
 }
 
 Price OrderBook::quote() const

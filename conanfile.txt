@@ -6,6 +6,7 @@ spdlog/1.5.0
 nlohmann_json/3.7.3
 jemalloc/5.2.1
 tbb/2020.0
+concurrentqueue/1.0.1
 
 [generators]
 txt

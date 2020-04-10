@@ -9,6 +9,7 @@ target_link_libraries(
   CONAN_PKG::spdlog
   CONAN_PKG::tbb
   CONAN_PKG::nlohmann_json
+  CONAN_PKG::concurrentqueue
 )
 
 target_include_directories(

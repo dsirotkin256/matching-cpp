@@ -10,6 +10,8 @@
 #include <boost/asio.hpp>
 #include <boost/asio/thread_pool.hpp>
 #include <tbb/concurrent_queue.h>
+#include <moodycamel/blockingconcurrentqueue.h>
+
 
 namespace matching_engine
 {
@@ -30,7 +32,7 @@ public:
     }
     void push(OrderPtr order)
     {
-        queue_.push(std::move(order));
+        queue_.enqueue(std::move(order));
     }
     void register_market(std::string_view market)
     {
@@ -38,14 +40,15 @@ public:
     }
     void listen()
     {
-        if (console_ != nullptr)
+        if (console_ != nullptr) {
             for (const auto& [name, _] : markets) {
                 console_->info("Consumer of {} started @{}", name, (pid_t) syscall (SYS_gettid));
             }
+        }
         OrderPtr order;
         auto last_log = Time::now();
         while(should_consume_()) {
-            queue_.pop(order);
+            queue_.wait_dequeue(order);
             auto &ob = markets.at(order->market_name());
             const auto start = Time::now();
             ob.match(std::move(order));
@@ -59,7 +62,7 @@ public:
                     .meas("order_matcher")
                     .tag("market", market.data())
                     .field("execution_duration", std::chrono::duration_cast<ns>(elapsed).count())
-                    .field("consumer_queue_length", static_cast<long>(queue_.size()))
+                    .field("consumer_queue_length", static_cast<long>(queue_.size_approx()))
                     .timestamp(std::chrono::duration_cast<ns>(Time::now().time_since_epoch()).count())
                     .send_udp("172.17.0.1", 8089);
                 });
@@ -71,10 +74,10 @@ public:
 private:
     bool should_consume_() const
     {
-        return !should_exit_ or !queue_.empty();
+        return !should_exit_ or queue_.size_approx() > 0;
     }
     std::unordered_map<std::string_view, OrderBook> markets;
-    tbb::concurrent_bounded_queue<OrderPtr> queue_;
+    moodycamel::BlockingConcurrentQueue<OrderPtr> queue_;
     std::atomic_bool should_exit_;
     std::shared_ptr<spdlog::logger> console_;
 };
@@ -132,7 +135,6 @@ public:
         pool_.join();
     }
 private:
-    //tbb::concurrent_unordered_map<std::string, std::shared_ptr<consumer>> market_registry_;
     std::unordered_map<std::string_view, std::shared_ptr<consumer>> market_registry_;
     boost::asio::thread_pool pool_;
     std::shared_ptr<spdlog::logger> console_;
