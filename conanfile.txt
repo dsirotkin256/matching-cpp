@@ -7,6 +7,7 @@ nlohmann_json/3.7.3
 jemalloc/5.2.1
 tbb/2020.0
 concurrentqueue/1.0.1
+libpqxx/7.0.5
 
 [generators]
 txt
