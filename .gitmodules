@@ -1,9 +1,6 @@
 [submodule "lib/FlameGraph"]
 	path = lib/FlameGraph
 	url = https://github.com/brendangregg/FlameGraph
-[submodule "lib/--force"]
-	path = lib/--force
-	url = git@github.com:basiliscos/cpp-bredis.git
 [submodule "lib/cpp-bredis"]
 	path = lib/cpp-bredis
 	url = git@github.com:basiliscos/cpp-bredis.git
