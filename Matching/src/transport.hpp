@@ -6,12 +6,105 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast/version.hpp>
 #include <boost/lexical_cast.hpp>
+#include <boost/variant.hpp>
 #include <nlohmann/json.hpp>
 #include <order_router.hpp>
+#include <bredis.hpp>
 
 namespace matching_engine
 {
-namespace tcp
+namespace transport
+{
+namespace redis
+{
+using socket_t = boost::asio::ip::tcp::socket;
+using endpoint_t = boost::asio::ip::tcp::endpoint;
+using context_t = boost::asio::io_context;
+namespace r = bredis;
+using buffer = boost::asio::streambuf;
+using iterator_t = typename r::to_iterator<buffer>::iterator_t;
+using endpoint_t = boost::asio::ip::tcp::endpoint;
+using tcp = boost::asio::ip::tcp;
+using policy_t = r::parsing_policy::keep_result;
+using parse_result_t = r::parse_result_mapper_t<iterator_t, policy_t>;
+using read_callback_t = std::function<void(const boost::system::error_code &error_code, parse_result_t &&r)>;
+using extractor_t = r::extractor<iterator_t>;
+
+class client
+{
+public:
+    client(const client&) = delete;
+    client& operator=(const client&) = delete;
+    client(context_t& ioc,
+           const endpoint_t& endpoint,
+           const std::shared_ptr<spdlog::logger>& console): console_{console}
+    {
+        socket_t socket{ioc, endpoint.protocol()};
+        socket_t subscribtion_socket{ioc, endpoint.protocol()};
+        socket.connect(endpoint);
+        subscribtion_socket.connect(endpoint);
+        c_ = std::make_shared< r::Connection<socket_t> >(std::move(subscribtion_socket));
+        conn_ = std::make_shared< r::Connection<socket_t> >(std::move(socket));
+        c_->write(r::single_command_t{psubscribe_cmd.data(), channel_name.data()});
+        c_->async_read(b_, notification_handler_);
+    };
+private:
+    const std::shared_ptr<spdlog::logger>& console_;
+    std::shared_ptr<r::Connection<socket_t>> c_;
+    std::shared_ptr<r::Connection<socket_t>> conn_;
+    buffer b_;
+    buffer queue_buff_;
+    const std::string_view channel_name{"__keyspace@0__:CONSUMER"};
+    const std::string_view queue_name{"CONSUMER"};
+    const std::string_view processing_queue_name{"CONSUMER_PROCESSING"};
+    const std::string_view psubscribe_cmd{"psubscribe"};
+    const std::string_view pmessage_cmd{"pmessage"};
+    const std::string_view lpush_cmd{"lpush"};
+    const std::string_view rpoplpush_cmd{"rpoplpush"};
+
+    read_callback_t notification_handler_ = [&](const boost::system::error_code& ec, parse_result_t &&r)
+    {
+        if (ec) {
+            throw ec;
+        }
+        auto extract = boost::apply_visitor(extractor_t(), r.result);
+        b_.consume(r.consumed);
+        auto& replies = boost::get<r::extracts::array_holder_t>(extract);
+        auto* type_reply = boost::get<r::extracts::string_t>(&replies.elements[0]);
+        if (type_reply && type_reply->str.compare(psubscribe_cmd) == 0) {
+            auto& channel = boost::get<r::extracts::string_t>(replies.elements[1]);
+            auto& payload = boost::get<r::extracts::int_t>(replies.elements[2]);
+            if (channel.str.compare(channel_name) == 0 && payload == 1) {
+                console_->info("redis::subscribed to {}", channel_name);
+            } else {
+                console_->warn("redis::failed to subscribe to {}", channel_name);
+            }
+        } else if (type_reply && type_reply->str.compare(pmessage_cmd) == 0) {
+            auto& payload = boost::get<r::extracts::string_t>(replies.elements[3]);
+            if (payload.str.compare(lpush_cmd) == 0) {
+                console_->info("redis::notification::new element in {}", channel_name);
+                conn_->async_write(queue_buff_,
+                                   r::single_command_t{rpoplpush_cmd.data(), queue_name.data(), processing_queue_name.data()},
+                [&](const boost::system::error_code& ec, std::size_t bytes) {
+                    if (ec) throw ec;
+                    queue_buff_.consume(bytes);
+                    conn_->async_read(queue_buff_, queue_handler_);
+                });
+            }
+        }
+        c_->async_read(b_, notification_handler_);
+    };
+    read_callback_t queue_handler_ = [&](const boost::system::error_code& ec, parse_result_t &&r)
+    {
+        if(ec) throw ec;
+        auto extract = boost::apply_visitor(extractor_t(), r.result);
+        queue_buff_.consume(r.consumed);
+        auto &payload = boost::get<r::extracts::string_t>(extract);
+        console_->info("redis::rpoplpush::{}", payload.str);
+    };
+};
+} // namespace redis
+namespace http
 {
 using boost::asio::ip::tcp;
 namespace http = boost::beast::http;
@@ -25,10 +118,11 @@ public:
     connection_handler(boost::asio::io_context &ioc,
                        const std::shared_ptr<router::dispatcher> dispatcher,
                        const std::shared_ptr<spdlog::logger>& console)
-        : strand_{std::make_unique<boost::asio::io_context::strand>(ioc)},
-          socket_{ioc}, work_{ioc}, dispatcher_{dispatcher}, console_{console} {}
+        : socket_{ioc}, strand_{std::make_unique<boost::asio::io_context::strand>(ioc)},
+          work_{ioc}, dispatcher_{dispatcher}, console_{console} {}
 
     connection_handler(const connection_handler&) = delete;
+    connection_handler& operator=(const connection_handler&) = delete;
 
     void dispatch()
     {
@@ -149,6 +243,7 @@ public:
         }
     }
     server(const server&) = delete;
+    server& operator=(const server&) = delete;
 
     boost::system::error_code shutdown()
     {
@@ -186,11 +281,12 @@ private:
         });
     }
 
-    tcp::acceptor acceptor_;
     boost::asio::io_context &ioc_;
+    tcp::acceptor acceptor_;
     std::shared_ptr<router::dispatcher> dispatcher_;
     const std::shared_ptr<spdlog::logger> console_;
     boost::asio::thread_pool pool_;
 };
-} // namespace tcp
+} // namespace http
+} // namespace transport
 } // namespace matching_engine

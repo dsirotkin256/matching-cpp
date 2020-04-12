@@ -17,14 +17,16 @@ namespace matching_engine
 {
 namespace router
 {
-class consumer
+class consumer : public std::enable_shared_from_this<consumer>
 {
+    using queue = moodycamel::BlockingConcurrentQueue<OrderPtr>;
     using ms = std::chrono::milliseconds;
     using ns = std::chrono::nanoseconds;
 public:
     consumer(std::shared_ptr<spdlog::logger> console):
         should_exit_{false}, console_(console) {}
     consumer(const consumer&) = delete;
+    consumer& operator=(const consumer&) = delete;
     consumer() = delete;
     void shutdown()
     {
@@ -77,16 +79,17 @@ private:
         return !should_exit_ or queue_.size_approx() > 0;
     }
     std::unordered_map<std::string_view, OrderBook> markets;
-    moodycamel::BlockingConcurrentQueue<OrderPtr> queue_;
+    queue queue_;
     std::atomic_bool should_exit_;
     std::shared_ptr<spdlog::logger> console_;
 };
 
-class dispatcher
+class dispatcher : public std::enable_shared_from_this<dispatcher>
 {
 public:
     dispatcher() = default;
     dispatcher(const dispatcher&) = delete;
+    dispatcher& operator=(const dispatcher&) = delete;
     dispatcher(std::vector<std::string_view> markets,
                std::shared_ptr<spdlog::logger> console = nullptr,
                const uint64_t available_cores = std::max(1u, std::thread::hardware_concurrency() - 1)):
@@ -94,17 +97,17 @@ public:
         console_{console}
     {
         const auto markets_per_core = uint64_t(markets.size() / available_cores);
-        auto reminder = markets.size() % available_cores;
+        auto remainder = markets.size() % available_cores;
         std::vector<std::shared_ptr<consumer>> consumer_pool;
         for (unsigned int core = 0; core < available_cores; core++) {
             consumer_pool.emplace_back(std::make_shared<consumer>(console_));
             auto& market_consumer = consumer_pool.back();
-            if (reminder > 0) {
+            if (remainder > 0) {
                 auto market = markets.back();
                 market_registry_[market] = market_consumer;
                 market_consumer->register_market(market);
                 markets.pop_back();
-                --reminder;
+                --remainder;
             }
             /* Costruct consumer for N markets distributed evenly across logical cores */
             for (auto index = markets_per_core; index > 0; --index) {

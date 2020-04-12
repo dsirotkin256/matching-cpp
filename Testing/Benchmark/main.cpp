@@ -2,7 +2,7 @@
 #include <vector>
 #include <orderbook.hpp>
 #include <order_router.hpp>
-#include <tcp_server.hpp>
+#include <transport.hpp>
 #include "markov.h"
 
 using namespace matching_engine;
@@ -60,22 +60,22 @@ static void OrderMatching(benchmark::State& state)
 BENCHMARK(OrderMatching)->DenseRange(1, 1000, 250)->UseManualTime()->Complexity(benchmark::oLogN);
 
 // TODO Starts and hangs, issue with thread pool. Fix it.
-static void OrderDispatching(benchmark::State& state)
-{
-    // Perform setup here
-    const std::vector<std::string_view> markets = {u8"USD_JPY"};
-    auto dispatcher = std::make_shared<router::dispatcher>(markets);
-    auto prices = SimulateMarket(state.range(0));
-    for(auto _ : state) {
-        for (auto price : prices) {
-            auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL;
-            auto quantity = double(rand() % 10 + 1) / (rand() % 20 + 1);
-            auto order = std::make_unique<Order>(markets[0], side, price, quantity);
-            dispatcher->send(std::move(order));
-        }
-    }
-    dispatcher->shutdown();
-}
+//static void OrderDispatching(benchmark::State& state)
+//{
+//    // Perform setup here
+//    const std::vector<std::string_view> markets = {u8"USD_JPY"};
+//    auto dispatcher = std::make_shared<router::dispatcher>(markets);
+//    auto prices = SimulateMarket(state.range(0));
+//    for(auto _ : state) {
+//        for (auto price : prices) {
+//            auto side = rand() % 2 ? SIDE::BUY : SIDE::SELL;
+//            auto quantity = double(rand() % 10 + 1) / (rand() % 20 + 1);
+//            auto order = std::make_unique<Order>(markets[0], side, price, quantity);
+//            dispatcher->send(std::move(order));
+//        }
+//    }
+//    dispatcher->shutdown();
+//}
 
 //BENCHMARK(OrderDispatching)->DenseRange(0, 1000, 250)->MeasureProcessCPUTime();
 
