@@ -44,6 +44,9 @@ add_definitions(-DBOOST_ERROR_CODE_HEADER_ONLY -DBOOST_BEAST_USE_STD_STRING_VIEW
 
 add_subdirectory(lib/cpp-bredis)
 
+add_subdirectory(lib/function2)
+add_subdirectory(lib/continuable)
+
 add_subdirectory(Matching)
 
 add_subdirectory(Service)

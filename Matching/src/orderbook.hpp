@@ -26,8 +26,7 @@
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 
-namespace matching_engine
-{
+namespace matching_engine {
 
 using Price = unsigned long;
 using Quantity = double;
@@ -41,8 +40,7 @@ enum STATE { INACTIVE, ACTIVE, CANCELLED, FULFILLED };
 
 enum TIF { GTC };
 
-class Order
-{
+class Order {
 private:
     const std::string_view market_name_; /* TODO Replace with std::string_view */
     const SIDE side_;
@@ -99,8 +97,7 @@ using queue_allocator = boost::container::allocator<OrderPtr>;
 using order_queue_type = boost::container::deque<OrderPtr, queue_allocator>;
 
 class OrderQueue
-    : public order_queue_type
-{
+    : public order_queue_type {
 public:
     OrderQueue() = default;
     OrderQueue(const OrderQueue &) = delete;
@@ -113,8 +110,7 @@ public:
     Quantity accumulate() const;
 };
 
-class OrderBook
-{
+class OrderBook {
 private:
     const std::string_view market_name_;
     struct Comp {
@@ -255,7 +251,8 @@ bool OrderBook::cancel(const UUID uuid, const SIDE side, const Price price)
         if (order_queue.empty()) /* Drop price node */
             tree.erase(price);
         return result;
-    } catch (const std::out_of_range &) { /* No price point exist */
+    }
+    catch (const std::out_of_range &) {   /* No price point exist */
         return false;
     }
 }
@@ -273,11 +270,11 @@ bool OrderBook::match(OrderPtr src)
 
     auto should_exit_tree = false;
     for (auto node = dest_tree.begin(), end = dest_tree.end();
-         !should_exit_tree && node != end;) {
+            !should_exit_tree && node != end;) {
         auto &&dest_queue = node->second;
         /* Buy cheap; sell expensive – conduct price improvement */
         if (src->is_buy() ? src->price() >= node->first
-            : src->price() <= node->first) {
+                : src->price() <= node->first) {
             for (auto exit_queue = false; !exit_queue && !dest_queue.empty();) {
                 auto dest = dest_queue.front().get();
                 auto leftover = dest->leftover() - src->leftover();
@@ -317,10 +314,12 @@ bool OrderBook::match(OrderPtr src)
             if (dest_queue.empty()) {
                 /* Purge the price point with empty queue */
                 node = dest_tree.erase(node++);
-            } else {
+            }
+            else {
                 ++node;
             }
-        } else {
+        }
+        else {
             should_exit_tree = true;
         }
     }
@@ -332,7 +331,8 @@ bool OrderBook::match(OrderPtr src)
                 node,
                 src->price(),
                 std::move(src));
-        } else { /* Insert in existing price node */
+        }
+        else {   /* Insert in existing price node */
             node->second.emplace_back(std::move(src));
         }
         return false;
@@ -388,7 +388,5 @@ std::vector<OrderBook::snapshot_point> OrderBook::snapshot() const
     traverse(sell_tree_, SIDE::SELL);
     return snapshot;
 }
-
-
 } // namespace matching_engine
 

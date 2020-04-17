@@ -86,8 +86,7 @@ std::vector<int> DTMC (std::vector< std::vector<double> > trans, int steps, int 
 }
 
 // BEGIN CTMC CLASS:
-class CTMC
-{
+class CTMC {
 public:
     CTMC(std::vector< std::vector<double> > initMatrix);
     ~CTMC();
@@ -153,7 +152,8 @@ void CTMC::simulate(double T, int state)
                     //push time and state
                     times.push_back(t);
                     states.push_back(j);
-                } else {
+                }
+                else {
                     j++;
                 }
             }

@@ -10,13 +10,32 @@
 #include <nlohmann/json.hpp>
 #include <order_router.hpp>
 #include <bredis.hpp>
+#include <continuable/continuable-base.hpp>
 
-namespace matching_engine
-{
-namespace transport
-{
-namespace redis
-{
+namespace matching_engine {
+namespace transport {
+class exponential_backoff {
+    boost::asio::steady_timer timer;
+    unsigned int retry_count, max_retries;
+
+
+    exponential_backoff(auto from = 1s, unsigned int max_retries = 1e4): timer{ioc, from},
+                        retry_count{0}, max_retries{max_retries}
+    {
+
+    }
+
+    bool retry(func)
+    {
+        bool result = func();
+        t.expires_at(std::pow(2, ++retry_count) - 1);
+
+
+    }
+
+};
+
+namespace redis {
 using socket_t = boost::asio::ip::tcp::socket;
 using endpoint_t = boost::asio::ip::tcp::endpoint;
 using context_t = boost::asio::io_context;
@@ -30,8 +49,7 @@ using parse_result_t = r::parse_result_mapper_t<iterator_t, policy_t>;
 using read_callback_t = std::function<void(const boost::system::error_code &error_code, parse_result_t &&r)>;
 using extractor_t = r::extractor<iterator_t>;
 
-class client
-{
+class client {
 public:
     client(const client&) = delete;
     client& operator=(const client&) = delete;
@@ -39,81 +57,147 @@ public:
            const endpoint_t& endpoint,
            const std::shared_ptr<spdlog::logger>& console): console_{console}
     {
-        socket_t socket{ioc, endpoint.protocol()};
-        socket_t subscribtion_socket{ioc, endpoint.protocol()};
-        socket.connect(endpoint);
-        subscribtion_socket.connect(endpoint);
-        c_ = std::make_shared< r::Connection<socket_t> >(std::move(subscribtion_socket));
-        conn_ = std::make_shared< r::Connection<socket_t> >(std::move(socket));
-        c_->write(r::single_command_t{psubscribe_cmd.data(), channel_name.data()});
-        c_->async_read(b_, notification_handler_);
-    };
-private:
-    const std::shared_ptr<spdlog::logger>& console_;
-    std::shared_ptr<r::Connection<socket_t>> c_;
-    std::shared_ptr<r::Connection<socket_t>> conn_;
-    buffer b_;
-    buffer queue_buff_;
-    const std::string_view channel_name{"__keyspace@0__:CONSUMER"};
-    const std::string_view queue_name{"CONSUMER"};
-    const std::string_view processing_queue_name{"CONSUMER_PROCESSING"};
-    const std::string_view psubscribe_cmd{"psubscribe"};
-    const std::string_view pmessage_cmd{"pmessage"};
-    const std::string_view lpush_cmd{"lpush"};
-    const std::string_view rpoplpush_cmd{"rpoplpush"};
+        socket = std::make_shared<socket_t>(ioc, endpoint.protocol());
+        subscribtion_socket = std::make_shared<socket_t>(ioc, endpoint.protocol());
 
-    read_callback_t notification_handler_ = [&](const boost::system::error_code& ec, parse_result_t &&r)
+        socket->connect(endpoint);
+        subscribtion_socket->connect(endpoint);
+
+        subscription_connection_ = std::make_shared< r::Connection<socket_t&> >(subscribtion_socket);
+        connection_ = std::make_shared< r::Connection<socket_t> >(std::move(socket);
+
+                      subscription_connection_->async_write(mc_subscription_buffer_,
+                              r::single_command_t{psubscribe_cmd.data(), channel_name.data()}, cti::use_continuable)
+                      .then(validate_subscription).fail(recover_failed_subscription)
+                      .then(handle_notifications);
+    }
+                  auto validate_subscription(const boost::system::error_code& ec, std::size_t bytes)
     {
-        if (ec) {
-            throw ec;
-        }
+        mc_subscription_buffer_.consume(bytes);
+        return subscription_connection_->async_read(mc_subscription_buffer_, cti::use_continuable)
+        .then([&](const boost::system::error_code& ec, parse_result_t &&r) {
+            auto extract = boost::apply_visitor(extractor_t(), r.result);
+            mc_subscription_buffer_.consume(r.consumed);
+            auto& replies = boost::get<r::extracts::array_holder_t>(extract);
+            auto* type = boost::get<r::extracts::string_t>(&replies.elements[0]);
+            if (type && type->str.compare(psubscribe_cmd) == 0) {
+                auto& channel = boost::get<r::extracts::string_t>(replies.elements[1]);
+                auto& payload = boost::get<r::extracts::int_t>(replies.elements[2]);
+                if (channel.str.compare(channel_name) == 0 && payload == 1) {
+                    console_->info("redis::subscribed to {}", channel_name);
+                }
+                else {
+                    console_->warn("redis::failed to subscribe to {}", channel_name);
+                    throw std::exception("Something bad has just happend! Need to report and resubscribe again");
+                }
+            }
+            else {
+                throw std::exception("Something bad has just happend! Need to report and resubscribe again");
+            }
+        });
+    }
+    auto recover_failed_subscription(std::exception_ptr e)
+    {
+        // TODO resubscribe
+    }
+    auto handle_notifications(const boost::system::error_code& ec, parse_result_t &&r)
+    {
         auto extract = boost::apply_visitor(extractor_t(), r.result);
-        b_.consume(r.consumed);
+        mc_subscription_buffer_.consume(r.consumed);
         auto& replies = boost::get<r::extracts::array_holder_t>(extract);
-        auto* type_reply = boost::get<r::extracts::string_t>(&replies.elements[0]);
-        if (type_reply && type_reply->str.compare(psubscribe_cmd) == 0) {
+        auto* type = boost::get<r::extracts::string_t>(&replies.elements[0]);
+        if (type && type->str.compare(psubscribe_cmd) == 0) {
             auto& channel = boost::get<r::extracts::string_t>(replies.elements[1]);
             auto& payload = boost::get<r::extracts::int_t>(replies.elements[2]);
             if (channel.str.compare(channel_name) == 0 && payload == 1) {
                 console_->info("redis::subscribed to {}", channel_name);
-            } else {
-                console_->warn("redis::failed to subscribe to {}", channel_name);
             }
-        } else if (type_reply && type_reply->str.compare(pmessage_cmd) == 0) {
+            else {
+                console_->warn("redis::failed to subscribe to {}", channel_name);
+                throw
+            }
+        }
+        else if (type && type->str.compare(pmessage_cmd) == 0) {
             auto& payload = boost::get<r::extracts::string_t>(replies.elements[3]);
             if (payload.str.compare(lpush_cmd) == 0) {
                 console_->info("redis::notification::new element in {}", channel_name);
-                conn_->async_write(queue_buff_,
-                                   r::single_command_t{rpoplpush_cmd.data(), queue_name.data(), processing_queue_name.data()},
-                [&](const boost::system::error_code& ec, std::size_t bytes) {
-                    if (ec) throw ec;
-                    queue_buff_.consume(bytes);
-                    conn_->async_read(queue_buff_, queue_handler_);
-                });
+                connection_->async_write(mc_list_buffer_,
+                                         r::single_command_t{rpoplpush_cmd.data(), queue_name.data(), processing_queue_name.data()},
+                                         cti::use_continuable)
+                .then(unpack_order).fail(cti::stop)
+                .then(set_processing).fail(cti::stop)
+                .then(remove_order_from_processing_queue).fail(cti::stop)
+                .then(dispatch_order);
             }
         }
-        c_->async_read(b_, notification_handler_);
-    };
-    read_callback_t queue_handler_ = [&](const boost::system::error_code& ec, parse_result_t &&r)
+        read_callback_t wait_for_notification = handle_notifications;
+        subscription_connection_->async_read(mc_subscription_buffer_, wait_for_notification);
+    }
+
+    auto set_processing(OrderPtr order)
     {
-        if(ec) throw ec;
-        auto extract = boost::apply_visitor(extractor_t(), r.result);
-        queue_buff_.consume(r.consumed);
-        auto &payload = boost::get<r::extracts::string_t>(extract);
-        console_->info("redis::rpoplpush::{}", payload.str);
-    };
+        // TODO DB I/O bound query to update order status
+        // retry if failed to update the status
+        return std::move(order);
+    }
+
+    auto remove_order_from_processing_queue(OrderPtr order)
+    {
+        // ocd on failure? It should never ever happen in theory! But in practice we will just ignore...
+        // Bcoz it can only be removed once the state is persisted in the db
+        return cti::make_continuable<OrderPtr>([order = std::move(order)](auto&& promise) {
+            promise.set_value(std::move(order));
+        });
+    }
+
+    auto unpack_order(const boost::system::error_code& ec, std::size_t bytes)
+    {
+        mc_list_buffer_.consume(bytes);
+        return connection_->async_read(mc_list_buffer_, cti::use_continuable)
+        .then([&](const boost::system::error_code& ec, parse_result_t &&r) {
+            auto extract = boost::apply_visitor(extractor_t(), r.result);
+            mc_list_buffer_.consume(r.consumed);
+            auto &payload = boost::get<r::extracts::string_t>(extract);
+            console_->info("redis::{}::{}", rpoplpush_cmd, payload.str);
+            // if unable to parse the object then stop the chain
+            return cti::make_continuable<OrderPtr>([raw_order = std::move(payload.str)](auto&& promise) {
+                auto order = std::make_unique<OrderPtr>(); // TODO parse JSON
+                promise.set_value(std::move(order));
+            });
+        });
+    }
+private:
+    const std::shared_ptr<spdlog::logger>& console_;
+
+    std::shared_ptr<r::Connection<socket_t>> subscription_connection_;
+    std::shared_ptr<r::Connection<socket_t>> connection_;
+
+    buffer mc_subscription_buffer_;
+    buffer mc_list_buffer_;
+
+    const std::string_view mc_list_name{"MARKET_CONSUMER"};
+    const std::string_view oc_list_name{"ORDER_CANCELATION"};
+    const std::string_view mcp_list_name{mc_list_name + "_PROCESSING"};
+    const std::string_view ocp_list_name{oc_list_name + "_PROCESSING"};
+
+    const std::string_view mc_channel_name{"__keyspace@0__:" + mc_list_name};
+    const std::string_view oc_channel_name{"__keyspace@0__:" + oc_list_name};
+
+    const std::string_view psubscribe_cmd{"psubscribe"};
+    const std::string_view pmessage_cmd{"pmessage"};
+    const std::string_view lpush_cmd{"lpush"};
+    const std::string_view rpoplpush_cmd{"rpoplpush"};
 };
 } // namespace redis
-namespace http
-{
+
+namespace http {
 using boost::asio::ip::tcp;
 namespace http = boost::beast::http;
 using request_t = http::request<boost::beast::http::string_body>;
 using response_t = http::response<boost::beast::http::string_body>;
 
 class connection_handler
-    : public std::enable_shared_from_this<connection_handler>
-{
+    : public std::enable_shared_from_this<connection_handler> {
 public:
     connection_handler(boost::asio::io_context &ioc,
                        const std::shared_ptr<router::dispatcher> dispatcher,
@@ -160,7 +244,8 @@ public:
                 //ss << nlohmann::json::parse("{\"target\":\""+target+"\",\"status\": \"FAILED\",\"origin\":\"" +
                 //    boost::lexical_cast<std::string>(socket_.remote_endpoint()) + "\"}");
                 status = http::status::bad_request;
-            } else {
+            }
+            else {
                 SIDE side = params[0] == u8"BUY" ? SIDE::BUY : SIDE::SELL;
                 std::string_view market = dispatcher_->registered_market_name(params[1]);
                 Price price = std::stod(params[2].data());
@@ -224,8 +309,7 @@ private:
     const std::shared_ptr<spdlog::logger>& console_;
 };
 
-class server
-{
+class server {
 public:
     server(boost::asio::io_context &ioc,
            const std::shared_ptr<router::dispatcher> dispatcher,
@@ -259,7 +343,8 @@ private:
         acceptor_.listen(boost::asio::socket_base::max_listen_connections);
         if (acceptor_.is_open()) {
             console_->info("server::start: started on {}", endpoint);
-        } else {
+        }
+        else {
             console_->warn("server::start: failed to start on {}", endpoint);
         }
         async_accept_();
@@ -274,7 +359,8 @@ private:
             //      handler->socket().remote_endpoint()));
             if (ec) {
                 console_->error("server::async_accept: {}", ec.message());
-            } else {
+            }
+            else {
                 handler->dispatch();
             }
             async_accept_();

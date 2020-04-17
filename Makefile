@@ -11,7 +11,7 @@ build: clean
 	conan remove -f -s -b -- '*'
 
 tidy:
-	astyle --style=linux --exclude=build --recursive *.cpp,*.c,*.h,*.hpp
+	astyle --style=stroustrup --exclude=build --exclude=lib --recursive *.cpp,*.c,*.h,*.hpp
 	find . -type f -name '*.orig' -delete
 
 clean:

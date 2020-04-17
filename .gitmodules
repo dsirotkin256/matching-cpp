@@ -4,3 +4,9 @@
 [submodule "lib/cpp-bredis"]
 	path = lib/cpp-bredis
 	url = git@github.com:basiliscos/cpp-bredis.git
+[submodule "lib/continuable"]
+	path = lib/continuable
+	url = https://github.com/Naios/continuable.git
+[submodule "lib/function2"]
+	path = lib/function2
+	url = https://github.com/Naios/function2.git

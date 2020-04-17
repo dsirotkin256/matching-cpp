@@ -5,6 +5,7 @@ target_link_libraries(
   matching
   INTERFACE
   bredis
+  continuable
   CONAN_PKG::jemalloc
   CONAN_PKG::boost
   CONAN_PKG::spdlog

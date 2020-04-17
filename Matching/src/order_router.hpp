@@ -13,12 +13,9 @@
 #include <moodycamel/blockingconcurrentqueue.h>
 
 
-namespace matching_engine
-{
-namespace router
-{
-class consumer : public std::enable_shared_from_this<consumer>
-{
+namespace matching_engine {
+namespace router {
+class consumer : public std::enable_shared_from_this<consumer> {
     using queue = moodycamel::BlockingConcurrentQueue<OrderPtr>;
     using ms = std::chrono::milliseconds;
     using ns = std::chrono::nanoseconds;
@@ -57,7 +54,7 @@ public:
             auto elapsed = Time::now() - start;
             /* Post consumer stats */
             if (std::chrono::duration_cast<ms>(start.time_since_epoch()).count()
-                - std::chrono::duration_cast<ms>(last_log.time_since_epoch()).count() >= 250) {
+                    - std::chrono::duration_cast<ms>(last_log.time_since_epoch()).count() >= 250) {
                 std::async(std::launch::async,[&,market=ob.market_name(),elapsed] {
                     /* NOTE Does it actually make sense to use async here?*/
                     influxdb_cpp::builder()
@@ -84,8 +81,7 @@ private:
     std::shared_ptr<spdlog::logger> console_;
 };
 
-class dispatcher : public std::enable_shared_from_this<dispatcher>
-{
+class dispatcher : public std::enable_shared_from_this<dispatcher> {
 public:
     dispatcher() = default;
     dispatcher(const dispatcher&) = delete;
