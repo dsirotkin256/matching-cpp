@@ -8,10 +8,8 @@
 #include <iostream>
 #include <ostream>
 #include <memory>
-#include <mutex>
 #include <numeric>
 #include <queue>
-#include <shared_mutex>
 #include <vector>
 #include <string_view>
 #include "tbb/parallel_reduce.h"
