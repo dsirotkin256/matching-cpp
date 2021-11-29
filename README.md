@@ -1,11 +1,63 @@
 # Table of Contents 
 
-[Matching Engine](#Service)
-
 [Installation](#Setup)
 
+[Matching Engine](#Matching)
 
-<a name="Service"/>
+[High-level API](#API)
+
+[Transport Layer](#Transport)
+
+[Storage Layer](#Storage)
+
+[Benchmark](#Benchmark)
+
+<a name="Setup"/>
+
+# Project setup
+
+## Docker
+
+Run the image in a container.
+
+Create a fresh container and run in interactive mode:
+
+```bash
+docker run --name matching_engine -it nrdwnd/exchange:latest
+```
+
+Development mode:
+
+```bash
+docker run --name matching_engine_dev -it -p9000:8080 --privileged -v ${PWD}:/opt/matching --cap-add=SYS_PTRACE --security-opt seccomp=unconfined nrdwnd/exchange:latest
+```
+
+Notes:
+
+- `unconfined` option disables some kernel security features which allows syscall debugging and program profiling from host machine
+- Exposes current working directory on host machine, that allows code editing from host
+
+## Rebuild the project
+
+When you are attached to the container run to recompile sources:
+
+```bash
+make build 
+```
+
+## Start the engine
+
+```bash
+./build/bin/matching_service
+```
+
+## Debugging
+
+```bash
+gdb --tui ./build/bin/matching_service
+```
+
+<a name="Matching"/>
 
 # Matching Engine
 
@@ -16,7 +68,92 @@ For buy (bid) side, orders are sorted in descending order of price. Order with h
 For sell (ask) side, orders are sorted in ascending order of price. Order with lowest ask price is first and highest ask price is last. If price is same then ordering is by time. The order that arrived earlier gets preference.
 We have done exhaustive testing of our matching engine to ensure that fairness is guaranteed.
 
-- Below is an example of [Geometric Brownian Motion](https://en.wikipedia.org/wiki/Geometric_Brownian_motion) simulation with 1m samples and `σ = 0.01`
+<a name="API"/>
+
+# API
+High-level interface: 
+- `GetOrderBookState(): OrderBook` – Order book snapshot `[ [side, price, depth], ...  ]`.
+- `GetBestBid(): Number` – The most expensive buying price available at which an asset might be sold out on the market.
+- `GetBestAsk(): Number` – The cheapest selling price available at which an asset might be purchased on the market.
+- `GetSpread(): Number` – Returns percent market spread `(b.ask - b.bid) / b.ask * 100`.
+- `GetQuote(): Number` – Returns the most recent price on which a buyer and seller agreed and at which some amount of the asset was transacted.
+- `OrderLookup(OrderID, Side): Order` – Returns active order details if the order still sits in the book.
+- `Buy(Order): Status` – Submits buy order.
+- `Sell(Order): Status` – Submits sell order.
+- `Cancel(OrderID, Side): Status` – Submits order cancel request.
+
+<a name="Transport"/>
+
+# Transport Layer
+
+## TCP
+
+### Redis
+
+By using `RPOPLPUSH` we can guarantee that the order will be processed exactly once:
+
+1. The service subscribe (`PSUBSCRIBE`) on `CONSUMER` queue keyspace notifications
+```
+PSUBSCRIBE "__keyspace@0__:CONSUMER"
+```
+2. Waits until `LPUSH` keyevent is fired
+```
+1) "pmessage"
+2) "__keyspace@0__:CONSUMER"
+3) "__keyspace@0__:CONSUMER"
+4) "lpush"  
+```
+3. Once it's triggered, the service pops the new order from the `CONSUMER` queue and atomically pushes to the `CONSUMER_PROCESSING` queue (`RPOPLPUSH`)
+```
+RPOPLPUSH "CONSUMER" "CONSUMER_PROCESSING"
+```
+4. Later, the state of the popped item is saved in the datastore with status `processing`
+5. Upon successful persistence of the order the consumer removes (`LREM`) the element from the `CONSUMER_PROCESSING` queue
+```
+LREM "CONSUMER_PROCESSING" 0 "order_id: 200, market: EUR_USD"
+```
+
+Edge cases:
+
+- if the matching engine crashed and failed to save the status after popping the order from the producer queue, on next recovery it loads all orders with `processing` status from the datastore and removes already saved orders from the consumer queue, after cleanup of consumer queue it proceeds operation as normal
+
+### HTTP
+
+Buy/sell POST request:
+```
+[BUY|SELL]/[EUR_USD|GBP_USD|USD_JPY|...]/PRICE/QUANTITY
+```
+Response:
+- `200` - success
+- `400` - failure
+
+<a name="Storage"/>
+
+### Native TCP
+
+Coming soon
+
+## UDP
+
+Coming soon
+
+## Kernel bypass
+
+Coming soon
+
+# Storage Layer
+
+## Postgres
+
+- Persist in the datastore the processing status for every incoming order as a special flag to destinguish orders that have been already handled by the matching engine which later will be used for recovery procedure.
+- Pull open orders with processing status from the datastore which will be used only once for recovery
+Atomically insert matching transaction between source order and distanation order (later can be done as bulk insert for multiple matched distanation orders).
+
+<a name="Benchmark"/>
+
+# Benchmarks
+
+Below is an example of [Geometric Brownian Motion](https://en.wikipedia.org/wiki/Geometric_Brownian_motion) simulation with 1m samples and `σ = 0.01`
 
 ```
 ============ Order Book ============
@@ -52,57 +189,3 @@ We have done exhaustive testing of our matching engine to ensure that fairness i
 ```
 
 - Stress test with 1m synthetic samples simulated every 5s; after 3h of continious order execution generated by simulation process, 2m active orders; the last memory snapshot of the matching process taken claims to hold only 300MB.
-
-<a name="Setup"/>
-
-# Project setup
-
-## Docker
-
-### Run the image in a container
-
-Create a fresh container and run in interactive mode:
-
-```bash
-docker run --name matching_engine -it nrdwnd/exchange:latest
-```
-
-Development mode:
-
-```bash
-docker run --name matching_engine_dev -it -p9000:8080 --privileged -v ${PWD}:/opt/matching --cap-add=SYS_PTRACE --security-opt seccomp=unconfined nrdwnd/exchange:latest
-```
-
-Notes:
-
-- `unconfined` option disables some kernel security features which allows syscall debugging and program profiling from host machine
-- Exposes current working directory on host machine, that allows code editing from host
-
-## Rebuild the project
-
-When you are attached to the container run to recompile sources:
-
-```bash
-make build 
-```
-
-## Start the engine
-```bash
-./build/bin/matching_service
-```
-
-## Debugging
-```bash
-gdb --tui ./build/bin/matching_service
-```
-
-## API
-- `GetOrderBook(): OrderBook` – Order book snapshot `[ [side, price, depth], ...  ]`.
-- `GetBestBidPrice(): Number` – The most expensive buying price available at which an asset might be sold out on the market.
-- `GetBestBidPrice(): Number` – The cheapest selling price available at which an asset might be purchased on the market.
-- `GetSpread(): Number` – Returns percent market spread `(b.ask - b.bid) / b.ask * 100`.
-- `GetQuote(): Number` – Returns the most recent price on which a buyer and seller agreed and at which some amount of the asset was transacted.
-- `OrderLookup(OrderID): Order` – Returns active order details if the order sits in the order book.
-- `Buy(Order): Status` – Submits buy order.
-- `Sell(Order): Status` – Submits sell order.
-- `Cancel(OrderID): Status` – Submits order cancel request.
