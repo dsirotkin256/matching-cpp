@@ -86,6 +86,16 @@ High-level interface:
 
 # Transport Layer
 
+## Event loop backend
+
+### EPOLL
+
+Currently for monitoring file descriptor events `epoll` is used. It scales quite well when we are interested in watching multiple file descriptors. But the problem it introduces is an kernel-userspace copy overhead in reading/writing kernel buffer on event notification. Also another drawback of the epoll is the choice of underlying data structure (RB-tree) which is despite of having `O(log n)` time complexity introduces a bunch of cache misses due to its intrinsic data allignment in memory.
+
+### io_uring
+
+
+
 ## TCP
 
 ### Redis
