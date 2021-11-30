@@ -6,6 +6,8 @@
 
 [High-level API](#API)
 
+[Software Design](#Design)
+
 [Transport Layer](#Transport)
 
 [Storage Layer](#Storage)
@@ -82,19 +84,45 @@ High-level interface:
 - `Sell(Order): Status` – Submits sell order.
 - `Cancel(OrderID, Side): Status` – Submits order cancel request.
 
+<a name="Design"/>
+
+# Software Design
+
+The engine is designed to be single-threaded. There's no need to have more than one thread as the underlying system is sequential which implies that latency and throughput exhibit a linear relationship.
+
+Asynchronious IO:
+
+- Handling sockets (accept, read, write, poll).
+
+- Writing/reading data into/from the block device (e.g., state reconstruction, logging).
+
+The interrupts should be handled via circular buffers. There are fixed sized Write Buffers (WB) and Read Buffers (RB).
+
+## Data-Oriented Design
+
+The main motivation behind this design choice is a reduction of bottleneck (pipeline bubble, context switches, cache misses, branch misspredictions, false-sharing etc.) in Von Neumann architecture by accentuating on data layouts, access patterns and transformations.
+
 <a name="Transport"/>
 
 # Transport Layer
 
-## Event loop backend
+## Event Loop Backend
+
+There are two backends which are switched based on traffic: polling and hardware interrupts.
 
 ### EPOLL
 
-Currently for monitoring file descriptor events `epoll` is used. It scales quite well when we are interested in watching multiple file descriptors. But the problem it introduces is an kernel-userspace copy overhead in reading/writing kernel buffer on event notification. Also another drawback of the epoll is the choice of underlying data structure (RB-tree) which is despite of having `O(log n)` time complexity introduces a bunch of cache misses due to its intrinsic data allignment in memory.
+Currently for monitoring file descriptor events the `epoll` is used. It scales quite well when we are interested in watching multiple file descriptors. But it introduces few trade-offs:
+
+- an unnecessary kernel-userspace copy overhead in reading/writing kernel buffer on event notifications.
+- Another drawback of the epoll is the choice of underlying data structure (RB-tree) which is, despite of having a satisfactory `O(log n)` average time complexity, it introduces a bunch of cache misses due to its intrinsic sparse data allignment in memory.
+- Pre-emptive interrupts on file descriptor available events which cause context-switches.
 
 ### io_uring
 
+Coming soon...
 
+Provides the kernel-userspace communication interface via shared Circular Buffers.
 
 ## TCP
 
@@ -131,7 +159,7 @@ Edge cases:
 
 Buy/sell POST request:
 ```
-[BUY|SELL]/[EUR_USD|GBP_USD|USD_JPY|...]/PRICE/QUANTITY
+[::]/[BUY|SELL]/[EUR_USD|GBP_USD|USD_JPY|...]/PRICE/QUANTITY
 ```
 Response:
 - `200` - success
@@ -147,12 +175,12 @@ Coming soon
 
 Coming soon
 
-## Kernel bypass
-
-Coming soon
-
 # Storage Layer
 
+## RocksDB
+  
+Coming soon
+  
 ## Postgres
 
 - Persist in the datastore the processing status for every incoming order as a special flag to destinguish orders that have been already handled by the matching engine which later will be used for recovery procedure.
