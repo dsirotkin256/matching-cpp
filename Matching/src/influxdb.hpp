@@ -34,8 +34,7 @@ inline __int64 writev(int sock, struct iovec* iov, int cnt)
 #define closesocket close
 #endif
 
-namespace influxdb_cpp
-{
+namespace influxdb_cpp {
 struct server_info {
     std::string host_;
     int port_;
@@ -46,8 +45,7 @@ struct server_info {
     server_info(const std::string& host, int port, const std::string& db = "", const std::string& usr = "", const std::string& pwd = "", const std::string& precision="ms")
         : host_(host), port_(port), db_(db), usr_(usr), pwd_(pwd), precision_(precision) {}
 };
-namespace detail
-{
+namespace detail {
 struct meas_caller;
 struct tag_caller;
 struct field_caller;
@@ -169,8 +167,7 @@ protected:
     std::stringstream lines_;
 };
 
-namespace detail
-{
+namespace detail {
 struct tag_caller : public builder {
     detail::tag_caller& tag(const std::string& k, const std::string& v)
     {
@@ -362,7 +359,8 @@ inline int inner::http_request(const char* method, const char* uri,
                         if(resp) resp->append(&header[len], iv[1].iov_len);
                         len += iv[1].iov_len;
                     }
-                } while(chunked);
+                }
+                while(chunked);
             }
             goto END;
         }

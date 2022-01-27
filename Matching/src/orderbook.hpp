@@ -24,8 +24,7 @@
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 
-namespace matching_engine
-{
+namespace matching_engine {
 
 using Price = unsigned long;
 using Quantity = double;
@@ -39,8 +38,7 @@ enum STATE { INACTIVE, ACTIVE, CANCELLED, FULFILLED };
 
 enum TIF { GTC };
 
-class Order
-{
+class Order {
 private:
     const std::string_view market_name_; /* TODO Replace with std::string_view */
     const SIDE side_;
@@ -97,8 +95,7 @@ using queue_allocator = boost::container::allocator<OrderPtr>;
 using order_queue_type = boost::container::deque<OrderPtr, queue_allocator>;
 
 class OrderQueue
-    : public order_queue_type
-{
+    : public order_queue_type {
 public:
     OrderQueue() = default;
     OrderQueue(const OrderQueue &) = delete;
@@ -111,8 +108,7 @@ public:
     Quantity accumulate() const;
 };
 
-class OrderBook
-{
+class OrderBook {
 private:
     const std::string_view market_name_;
     struct Comp {
@@ -253,7 +249,8 @@ bool OrderBook::cancel(const UUID uuid, const SIDE side, const Price price)
         if (order_queue.empty()) /* Drop price node */
             tree.erase(price);
         return result;
-    } catch (const std::out_of_range &) { /* No price point exist */
+    }
+    catch (const std::out_of_range &) {   /* No price point exist */
         return false;
     }
 }
@@ -266,59 +263,61 @@ std::string_view OrderBook::market_name() const
 bool OrderBook::match(OrderPtr src)
 {
     auto &&src_tree = src->is_buy() ? buy_tree_ : sell_tree_;
-    auto &&dist_tree = src->is_buy() ? sell_tree_ : buy_tree_;
+    auto &&dest_tree = src->is_buy() ? sell_tree_ : buy_tree_;
     src->state(STATE::ACTIVE);
 
     auto should_exit_tree = false;
-    for (auto node = dist_tree.begin(), end = dist_tree.end();
-         !should_exit_tree && node != end;) {
-        auto &&dist_queue = node->second;
+    for (auto node = dest_tree.begin(), end = dest_tree.end();
+            !should_exit_tree && node != end;) {
+        auto &&dest_queue = node->second;
         /* Buy cheap; sell expensive – conduct price improvement */
         if (src->is_buy() ? src->price() >= node->first
-            : src->price() <= node->first) {
-            for (auto exit_queue = false; !exit_queue && !dist_queue.empty();) {
-                auto dist = dist_queue.front().get();
-                auto leftover = dist->leftover() - src->leftover();
+                : src->price() <= node->first) {
+            for (auto exit_queue = false; !exit_queue && !dest_queue.empty();) {
+                auto dest = dest_queue.front().get();
+                auto leftover = dest->leftover() - src->leftover();
 
-                /* Fulfilled source; partially or fulfilled dist */
+                /* Fulfilled source; partially or fulfilled dest */
                 if (leftover >= 0) {
                     src->execute(src->leftover());
                     src->state(STATE::FULFILLED);
                     /* Exact match */
                     if (leftover == 0) {
-                        dist->execute(dist->leftover());
+                        dest->execute(dest->leftover());
                     }
                     /* Partial match */
                     else {
-                        dist->execute(dist->leftover() - leftover);
+                        dest->execute(dest->leftover() - leftover);
                     }
                     /* Remove fulfilled order from queue */
-                    if (dist->leftover() == 0) {
-                        dist->state(STATE::FULFILLED);
-                        dist_queue.pop_front();
+                    if (dest->leftover() == 0) {
+                        dest->state(STATE::FULFILLED);
+                        dest_queue.pop_front();
                     }
                     /* Matching is complete */
                     exit_queue = true;
                     should_exit_tree = true;
                 }
-                /* Partially-filled source; fulfilled dist */
+                /* Partially-filled source; fulfilled dest */
                 else {
-                    src->execute(dist->leftover());
-                    dist->execute(dist->leftover());
-                    dist->state(STATE::FULFILLED);
+                    src->execute(dest->leftover());
+                    dest->execute(dest->leftover());
+                    dest->state(STATE::FULFILLED);
                     /* Remove fulfilled order from queue */
-                    dist_queue.pop_front();
+                    dest_queue.pop_front();
                     /* Try next order in the queue */
                 }
             }
             /* Try next price node */
-            if (dist_queue.empty()) {
+            if (dest_queue.empty()) {
                 /* Purge the price point with empty queue */
-                node = dist_tree.erase(node++);
-            } else {
+                node = dest_tree.erase(node++);
+            }
+            else {
                 ++node;
             }
-        } else {
+        }
+        else {
             should_exit_tree = true;
         }
     }
@@ -330,7 +329,8 @@ bool OrderBook::match(OrderPtr src)
                 node,
                 src->price(),
                 std::move(src));
-        } else { /* Insert in existing price node */
+        }
+        else {   /* Insert in existing price node */
             node->second.emplace_back(std::move(src));
         }
         return false;
@@ -386,7 +386,5 @@ std::vector<OrderBook::snapshot_point> OrderBook::snapshot() const
     traverse(sell_tree_, SIDE::SELL);
     return snapshot;
 }
-
-
 } // namespace matching_engine
 

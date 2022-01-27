@@ -19,10 +19,12 @@
 #include <numeric>
 #include <sstream>
 #include <orderbook.hpp>
-#include <tcp_server.hpp>
+#include <transport.hpp>
 #include <order_router.hpp>
 
 using namespace std::chrono_literals;
+using tcp_t = boost::asio::ip::tcp;
+using endpoint_t = tcp_t::endpoint;
 namespace me = matching_engine;
 
 int main(int argc, char *argv[])
@@ -45,7 +47,9 @@ int main(int argc, char *argv[])
 
     /* Initialise TCP transport layer */
     boost::asio::io_context ioc{(int)std::thread::hardware_concurrency()};
-    me::tcp::server server(ioc, dispatcher, console);
+    me::transport::http::server server(ioc, dispatcher, console);
+    auto redis_endpoint = endpoint_t(tcp_t::v4(), 6379);
+    me::transport::redis::client redis(ioc, redis_endpoint, console);
 
     ioc.run();
 

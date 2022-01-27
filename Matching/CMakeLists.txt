@@ -4,6 +4,8 @@ target_sources(matching INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(
   matching
   INTERFACE
+  bredis
+  continuable
   CONAN_PKG::jemalloc
   CONAN_PKG::boost
   CONAN_PKG::spdlog
