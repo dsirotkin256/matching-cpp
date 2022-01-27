@@ -10,6 +10,7 @@ target_link_libraries(
   CONAN_PKG::tbb
   CONAN_PKG::nlohmann_json
   CONAN_PKG::concurrentqueue
+  CONAN_PKG::libpqxx
 )
 
 target_include_directories(

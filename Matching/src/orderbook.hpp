@@ -23,6 +23,7 @@
 #include <boost/align/aligned_delete.hpp>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
+#include <datastore.hpp>
 
 namespace matching_engine
 {
